@@ -17,6 +17,45 @@
     padding: 0;
 }
 
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes scaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background-color: var(--bg-color);
@@ -24,6 +63,8 @@ body {
     height: 100vh;
     display: flex;
     flex-direction: column;
+    opacity: 0;
+    animation: fadeIn 0.5s ease-out forwards;
 }
 
 .container {
@@ -40,6 +81,7 @@ body {
 header {
     padding: 40px 0;
     text-align: center;
+    animation: fadeInUp 0.6s ease-out 0.1s backwards;
 }
 
 .header-bar {
@@ -65,7 +107,7 @@ header {
     font-size: 16px;
     box-shadow: var(--shadow);
     outline: none;
-    transition: box-shadow 0.2s;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .settings-fab {
@@ -86,15 +128,23 @@ header {
     justify-content: center;
     z-index: 1200;
     padding: 0;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .settings-fab:hover {
     background: var(--primary-hover);
+    transform: scale(1.1) rotate(90deg);
+    box-shadow: 0 8px 24px rgba(0,120,212,0.3);
+}
+
+.settings-fab:active {
+    transform: scale(0.95) rotate(90deg);
 }
 
 .search-bar input:focus {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
     border-color: var(--primary-color);
+    transform: translateY(-1px);
 }
 
 /* Main Layout */
@@ -114,6 +164,7 @@ main {
     box-shadow: var(--shadow);
     display: flex;
     flex-direction: column;
+    animation: slideInRight 0.5s ease-out 0.2s backwards;
 }
 
 .sidebar ul {
@@ -127,20 +178,24 @@ main {
     cursor: pointer;
     border-radius: var(--radius);
     margin-bottom: 5px;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    position: relative;
+    overflow: hidden;
 }
 
 .sidebar li:hover {
     background-color: #f0f0f0;
+    transform: translateX(4px);
 }
 
 .sidebar li.active {
     background-color: #e6f2ff;
     color: var(--primary-color);
     font-weight: 600;
+    box-shadow: 0 2px 6px rgba(0,120,212,0.1);
 }
 
 .sidebar .delete-cat {
@@ -148,6 +203,7 @@ main {
     font-size: 12px;
     color: #999;
     padding: 2px 6px;
+    transition: all 0.2s;
 }
 .sidebar li:hover .delete-cat {
     opacity: 1;
@@ -156,6 +212,7 @@ main {
     color: red;
     background: #ffe6e6;
     border-radius: 4px;
+    transform: scale(1.1);
 }
 
 .icon-btn {
@@ -167,11 +224,13 @@ main {
     cursor: pointer;
     color: var(--text-secondary);
     margin-top: 10px;
+    transition: all 0.2s;
 }
 
 .icon-btn:hover {
     border-color: var(--primary-color);
     color: var(--primary-color);
+    background-color: rgba(0,120,212,0.05);
 }
 
 /* Content Area */
@@ -183,36 +242,53 @@ main {
 
 .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 140px));
+    gap: 16px;
+    justify-content: start;
 }
 
 /* Bookmark Card */
 .bookmark-card, .add-bookmark-card {
     background: var(--card-bg);
     border-radius: var(--radius);
-    padding: 15px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 8px;
     text-align: center;
     box-shadow: var(--shadow);
     cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s;
-    height: 140px;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    height: 120px;
     position: relative;
     text-decoration: none;
     color: inherit;
+    /* 初始状态由 animation 控制 */
+    animation: fadeInUp 0.5s ease-out backwards;
 }
 
 .bookmark-card.drag-ready {
     cursor: grab;
+    transform: scale(1.02);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.15);
 }
 
 .bookmark-card.dragging {
     opacity: 0.6;
     cursor: grabbing;
+    transform: scale(1.05);
+}
+
+.bookmark-card.invisible-drag-source {
+    opacity: 0;
+    position: fixed !important;
+    top: -9999px !important;
+    left: -9999px !important;
+    pointer-events: none;
+    transition: none !important;
+    transform: none !important;
 }
 
 .bookmark-placeholder {
@@ -235,15 +311,25 @@ main {
 }
 
 .bookmark-card:hover, .add-bookmark-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+}
+
+.bookmark-card:active, .add-bookmark-card:active {
+    transform: scale(0.96);
 }
 
 .bookmark-icon {
-    width: 48px;
-    height: 48px;
-    margin-bottom: 10px;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 0;
     object-fit: contain;
+    border-radius: 12px;
+    transition: transform 0.3s;
+}
+
+.bookmark-card:hover .bookmark-icon {
+    transform: scale(1.1);
 }
 
 .bookmark-title {
@@ -254,6 +340,11 @@ main {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     word-break: break-all;
+    transition: color 0.2s;
+}
+
+.bookmark-card:hover .bookmark-title {
+    color: var(--primary-color);
 }
 
 .add-bookmark-card {
@@ -261,11 +352,58 @@ main {
     background: transparent;
     box-shadow: none;
     color: var(--text-secondary);
+    transition: all 0.2s;
+    height: auto;
+    min-height: 120px;
 }
 
 .add-bookmark-card .plus {
     font-size: 32px;
-    margin-bottom: 5px;
+    margin-bottom: 2px;
+    transition: transform 0.3s;
+}
+
+.add-bookmark-card:hover .plus {
+    transform: rotate(90deg);
+    color: var(--primary-color);
+}
+
+.add-bookmark-card:hover {
+    border-color: var(--primary-color);
+    background: rgba(0,120,212,0.02);
+    color: var(--primary-color);
+}
+
+.add-bookmark-card .add-card-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.add-card-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.add-card-btn {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: #fff;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-color);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+
+.add-card-btn:hover {
+    transform: translateY(-1px);
+    border-color: var(--primary-color);
+    box-shadow: 0 3px 8px rgba(0,0,0,0.08);
 }
 
 .card-actions {
@@ -273,6 +411,7 @@ main {
     top: 5px;
     right: 5px;
     display: none;
+    animation: fadeIn 0.2s ease-out;
 }
 
 .bookmark-card:hover .card-actions {
@@ -280,7 +419,7 @@ main {
 }
 
 .action-btn {
-    background: rgba(255,255,255,0.9);
+    background: rgba(255,255,255,0.95);
     border: none;
     border-radius: 50%;
     width: 24px;
@@ -288,11 +427,13 @@ main {
     cursor: pointer;
     font-size: 12px;
     color: #666;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+    transition: all 0.2s;
 }
 
 .action-btn:hover {
     color: var(--primary-color);
+    transform: scale(1.15);
 }
 
 .action-btn.delete:hover {
@@ -311,23 +452,85 @@ main {
     justify-content: center;
     align-items: center;
     z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    backdrop-filter: blur(4px);
+}
+
+.modal:not(.hidden) {
+    opacity: 1;
+    visibility: visible;
+    animation: fadeIn 0.3s ease-out;
 }
 
 .modal.hidden {
     display: none;
 }
 
+#bookmarkModal {
+    z-index: 1100;
+}
+
+/* 覆盖 .hidden 的 display:none 以支持动画，
+   但为了不破坏 JS 逻辑（JS 移除 hidden 类），
+   我们使用 animation 在元素出现时播放 */
+.modal:not(.hidden) .modal-content {
+    animation: scaleIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.no-animation, .no-animation * {
+    animation: none !important;
+    transition: none !important;
+}
+
 .modal-content {
     background: white;
     padding: 25px;
-    border-radius: var(--radius);
+    border-radius: 16px; /* 更圆润 */
     width: 100%;
     max-width: 400px;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.2);
+    max-height: 90vh;
+    overflow-y: auto;
+    transform-origin: center center;
+}
+
+.folder-modal {
+    max-width: 720px;
 }
 
 .modal-content h3 {
     margin-bottom: 20px;
+}
+
+.bookmark-type-switch {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.type-chip {
+    flex: 1;
+    border: 1px solid var(--border-color);
+    background: #fff;
+    padding: 8px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-secondary);
+    transition: border-color 0.15s, box-shadow 0.15s, color 0.15s, background 0.15s;
+}
+
+.type-chip.active {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+    background: rgba(0, 120, 212, 0.08);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+.type-section.hidden {
+    display: none;
 }
 
 .form-group {
@@ -343,6 +546,7 @@ main {
 
 .form-group input[type="text"],
 .form-group input[type="url"],
+.form-group input[type="password"],
 .form-group select {
     width: 100%;
     padding: 8px 12px;
@@ -403,6 +607,65 @@ main {
     display: flex;
     gap: 15px;
     font-size: 13px;
+}
+
+.custom-icon-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.custom-icon-tabs {
+    display: flex;
+    gap: 8px;
+}
+
+.custom-icon-tab {
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.custom-icon-tab.active {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    box-shadow: 0 0 0 1px rgba(0,120,212,0.12);
+}
+
+.custom-icon-panel {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.swatch-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.swatch-row input[type="text"] {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.swatch-row input[type="color"] {
+    width: 48px;
+    height: 32px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0;
+    background: transparent;
 }
 
 .radio-label {
@@ -555,6 +818,198 @@ main {
     word-break: break-all;
 }
 
+.storage-config {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 10px;
+}
+
+.storage-config-card {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+    background: #fdfdfd;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+}
+
+.storage-config-card h5 {
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.form-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    align-items: flex-start;
+}
+
+.form-row .form-group {
+    margin-bottom: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.flex-1 {
+    flex: 1;
+}
+
 .hidden {
     display: none !important;
+}
+
+.folder-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 150px));
+    gap: 14px;
+    margin: 12px 0;
+}
+
+.folder-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    text-decoration: none;
+    color: inherit;
+    background: #fff;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.folder-item:hover {
+    border-color: var(--primary-color);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.folder-item img {
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+}
+
+.folder-item .title {
+    font-size: 14px;
+    text-align: center;
+}
+
+.folder-empty {
+    font-size: 14px;
+    color: var(--text-secondary);
+    padding: 12px;
+}
+
+.folder-card .folder-icon-grid {
+    width: 48px;
+    height: 48px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 2px;
+    background: #f5f5f5;
+    border-radius: 12px;
+    padding: 3px;
+    box-sizing: border-box;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
+}
+
+.folder-icon-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border-radius: 6px;
+}
+
+.folder-icon-cell img {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
+}
+
+.folder-icon-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 18px;
+}
+
+.folder-modal-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    margin-bottom: 20px;
+    padding-top: 10px;
+}
+
+.folder-title-wrap {
+    text-align: center;
+}
+
+.folder-title-wrap h3 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 12px;
+    border-radius: 6px;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+}
+
+.folder-title-wrap h3:hover {
+    background-color: rgba(0,0,0,0.05);
+    color: var(--primary-color);
+}
+
+.folder-title-wrap h3::after {
+    content: '✎';
+    font-size: 18px;
+    margin-left: 8px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    color: var(--text-secondary);
+    font-weight: normal;
+}
+
+.folder-title-wrap h3:hover::after {
+    opacity: 1;
+}
+
+.folder-title-input {
+    font-size: 24px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border: 1px solid var(--primary-color);
+    border-radius: 6px;
+    outline: none;
+    text-align: center;
+    width: auto;
+    min-width: 120px;
+    max-width: 300px;
+    color: var(--text-color);
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(0,120,212,0.2);
+}
+
+.folder-modal .modal-actions {
+    justify-content: center;
+}
+
+.bookmark-card.folder-drop-ready {
+    box-shadow: 0 0 0 2px rgba(0,120,212,0.2);
+}
+
+.bookmark-card .bookmark-title {
+    text-align: center;
 }

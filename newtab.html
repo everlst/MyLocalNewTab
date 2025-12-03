@@ -36,17 +36,21 @@
     <!-- 模态框：添加/编辑书签 -->
     <div id="bookmarkModal" class="modal hidden">
         <div class="modal-content">
-            <h3><span id="modalTitle">添加网址</span></h3>
+            <h3><span id="modalTitle">添加</span></h3>
+            <div class="bookmark-type-switch" id="bookmarkTypeSwitch">
+                <button type="button" class="type-chip active" data-type="link">网址</button>
+                <button type="button" class="type-chip" data-type="folder">文件夹</button>
+            </div>
             <form id="bookmarkForm">
-                <div class="form-group">
+                <div class="form-group type-section type-link">
                     <label for="bookmarkUrl">网址 (URL)</label>
-                    <input type="url" id="bookmarkUrl" required placeholder="https://example.com">
+                    <input type="url" id="bookmarkUrl" placeholder="https://example.com">
                 </div>
                 <div class="form-group">
                     <label for="bookmarkTitle">标题</label>
                     <input type="text" id="bookmarkTitle" required placeholder="网站名称">
                 </div>
-                <div class="form-group">
+                <div class="form-group type-section type-link">
                     <label>图标</label>
                     <div class="icon-preview-container">
                         <img id="iconPreview" src="" alt="预览" class="hidden">
@@ -55,10 +59,29 @@
                                 <input type="radio" name="iconType" value="favicon" checked> 自动获取 Favicon
                             </label>
                             <label class="radio-label">
-                                <input type="radio" name="iconType" value="custom"> 自定义图片
+                                <input type="radio" name="iconType" value="custom"> 自定义图标
                             </label>
                         </div>
-                        <input type="file" id="customIconInput" accept="image/*" class="hidden">
+                        <div id="customIconControls" class="custom-icon-controls hidden">
+                            <div class="custom-icon-tabs">
+                                <button type="button" data-mode="upload" class="custom-icon-tab active">本地图片</button>
+                                <button type="button" data-mode="swatch" class="custom-icon-tab">纯色+文字</button>
+                            </div>
+                            <div class="custom-icon-panel" data-mode="upload">
+                                <input type="file" id="customIconInput" accept="image/*">
+                            </div>
+                            <div class="custom-icon-panel hidden" data-mode="swatch">
+                                <div class="swatch-row">
+                                    <label for="swatchColor">颜色</label>
+                                    <input type="color" id="swatchColor" value="#4ac55c">
+                                </div>
+                                <div class="swatch-row">
+                                    <label for="swatchText">文字</label>
+                                    <input type="text" id="swatchText" maxlength="4" placeholder="1-2 字符">
+                                </div>
+                                <button type="button" id="swatchApplyBtn" class="btn-secondary btn-compact">应用</button>
+                            </div>
+                        </div>
                         <div id="autoIconControls" class="icon-results-controls hidden">
                             <button type="button" id="refreshIconsBtn" class="btn-secondary btn-compact">重新获取图标</button>
                         </div>
@@ -68,7 +91,11 @@
                         </div>
                     </div>
                 </div>
-                <div class="form-group">
+                <div class="form-group type-section type-folder hidden">
+                    <label>文件夹说明</label>
+                    <p class="tips">可拖动网站到文件夹收纳，重叠放置或在文件夹内拖拽排序。</p>
+                </div>
+                <div class="form-group" id="categoryFormGroup">
                     <label for="bookmarkCategory">分类</label>
                     <select id="bookmarkCategory">
                         <!-- 选项由 JS 生成 -->
@@ -114,6 +141,14 @@
                         <input type="radio" name="storageMode" value="sync">
                         账号同步（随 Edge 登录同步）
                     </label>
+                    <label class="radio-label">
+                        <input type="radio" name="storageMode" value="webdav">
+                        WebDAV 同步（自托管）
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="storageMode" value="gist">
+                        GitHub Gist 同步
+                    </label>
                 </div>
                 <div class="storage-info">
                     <div id="browserStorageInfo" class="storage-info-item">
@@ -126,21 +161,109 @@
                         <p>通过 chrome.storage.sync 与 Edge/Chrome 登录账号同步，适合多设备共享。受浏览器同步配额限制（~100KB），数据过大时请改用浏览器存储或导出备份。</p>
                         <p class="path-tip">可在 edge://sync-internals 查看同步状态；数据保存在浏览器账号云端。</p>
                     </div>
+                    <div id="webdavStorageInfo" class="storage-info-item hidden">
+                        <h5>WebDAV 同步</h5>
+                        <p>需要可外网访问的 WebDAV 端点，支持 HTTPS + 基础认证（用户名 / 密码或应用专用密码）。扩展只会读写一份 JSON 文件，不会创建额外目录。</p>
+                        <p class="path-tip">示例：<code>https://dav.example.com/remote.php/dav/files/&lt;user&gt;/edgeTab-data.json</code></p>
+                    </div>
+                    <div id="gistStorageInfo" class="storage-info-item hidden">
+                        <h5>GitHub Gist 同步</h5>
+                        <p>使用 GitHub Personal Access Token（仅需勾选 <code>gist</code> 权限）。可填现有 Gist ID，留空则首次保存时自动创建一个私有 Gist。</p>
+                        <p class="path-tip">默认文件名 <code>edgeTab-data.json</code>，可自定义；Token/Gist ID 仅保存在本地。</p>
+                    </div>
+                </div>
+
+                <div class="storage-config">
+                    <div id="webdavConfig" class="storage-config-card hidden">
+                        <h5>WebDAV 配置</h5>
+                        <div class="form-group">
+                            <label for="webdavEndpoint">文件地址（直指 JSON 文件）</label>
+                            <input type="url" id="webdavEndpoint" placeholder="https://dav.example.com/dav/files/user/edgeTab-data.json">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="webdavUsername">用户名</label>
+                                <input type="text" id="webdavUsername" placeholder="webdav用户名">
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="webdavPassword">密码 / 应用专用密码</label>
+                                <input type="password" id="webdavPassword" placeholder="密码仅保存在本地">
+                            </div>
+                        </div>
+                        <p class="tips">需具备 GET/PUT 权限；部分 NAS/Nextcloud 默认开启 WebDAV，可参考其“外部存储”或“文件协议”文档。</p>
+                    </div>
+
+                    <div id="gistConfig" class="storage-config-card hidden">
+                        <h5>Gist 配置</h5>
+                        <div class="form-group">
+                            <label for="gistToken">GitHub Token（仅 gist 权限）</label>
+                            <input type="password" id="gistToken" placeholder="ghp_xxx 或 github_pat_xxx">
+                        </div>
+                        <div class="form-group">
+                            <label for="gistId">Gist ID（留空则自动创建私有 Gist）</label>
+                            <input type="text" id="gistId" placeholder="如：a1b2c3d4e5f6g7h8i9j0">
+                        </div>
+                        <div class="form-group">
+                            <label for="gistFilename">文件名</label>
+                            <input type="text" id="gistFilename" placeholder="edgeTab-data.json">
+                        </div>
+                        <p class="tips">Token 和 Gist ID 仅保存在浏览器本地。文件不存在时将自动创建；变更文件名会在同一 Gist 下生成新文件。</p>
+                    </div>
+                    <div id="remoteActions" class="storage-config-card hidden">
+                        <h5>同步操作</h5>
+                        <p class="tips">验证配置成功后，选择一次性同步方式：</p>
+                        <div class="settings-actions">
+                            <button id="remotePushBtn" type="button" class="btn-secondary">本地覆盖云端</button>
+                            <button id="remoteMergeBtn" type="button" class="btn-secondary">合并后上传并生效</button>
+                            <button id="remotePullBtn" type="button" class="btn-secondary">云端覆盖本地</button>
+                        </div>
+                        <p class="tips">仅在点击“应用配置”后可用；完成一次同步后，后续操作将自动使用该模式。</p>
+                    </div>
                 </div>
             </div>
 
             <div class="settings-section">
                 <h4>数据转移</h4>
+                <div class="form-group">
+                    <label for="importSource">选择导入数据来源</label>
+                    <select id="importSource">
+                        <option value="edgeTab">当前扩展导出的 JSON</option>
+                        <option value="wetab">WeTab 导出</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="importMode">导入模式</label>
+                    <select id="importMode">
+                        <option value="merge">合并（在现有数据基础上追加，不重复网址）</option>
+                        <option value="overwrite">覆盖（替换当前所有数据）</option>
+                    </select>
+                </div>
                 <div class="settings-actions">
                     <button id="exportDataBtn" class="btn-secondary" type="button">导出数据</button>
                     <label for="importDataInput" class="btn-secondary import-label">导入数据</label>
                     <input type="file" id="importDataInput" accept="application/json" class="hidden" />
                 </div>
-                <p class="tips">导出为 JSON 文件，可用于备份或导入至其他设备。</p>
+                <p class="tips">导出为 JSON 文件，可用于备份或导入至其他设备。导入前请选择对应的数据来源。</p>
             </div>
 
             <div class="modal-actions">
+                <button type="button" id="applySettingsBtn" class="btn-secondary">应用配置</button>
                 <button type="button" id="closeSettingsBtn" class="btn-primary">完成</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态框：文件夹预览 -->
+    <div id="folderModal" class="modal hidden">
+        <div class="modal-content folder-modal">
+            <div class="folder-modal-header">
+                <div class="folder-title-wrap">
+                    <h3 id="folderModalTitle">文件夹</h3>
+                </div>
+            </div>
+            <div id="folderContent" class="grid folder-grid" data-context="folder"></div>
+            <div class="modal-actions">
+                <button type="button" id="closeFolderBtn" class="btn-primary">关闭</button>
             </div>
         </div>
     </div>

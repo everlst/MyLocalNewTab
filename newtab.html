@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新标签页</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-bar">
+                <div class="search-bar">
+                    <input type="text" id="searchInput" placeholder="搜索 Google..." />
+                </div>
+            </div>
+        </header>
+        
+        <main>
+            <aside class="sidebar">
+                <ul id="categoryList">
+                    <!-- 分类列表将通过 JS 生成 -->
+                    <li class="active" data-cat="default">常用</li>
+                </ul>
+                <button id="addCategoryBtn" class="icon-btn" title="添加分类">+</button>
+            </aside>
+            
+            <section class="content">
+                <div id="bookmarkGrid" class="grid">
+                    <!-- 书签列表将通过 JS 生成 -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 模态框：添加/编辑书签 -->
+    <div id="bookmarkModal" class="modal hidden">
+        <div class="modal-content">
+            <h3><span id="modalTitle">添加网址</span></h3>
+            <form id="bookmarkForm">
+                <div class="form-group">
+                    <label for="bookmarkUrl">网址 (URL)</label>
+                    <input type="url" id="bookmarkUrl" required placeholder="https://example.com">
+                </div>
+                <div class="form-group">
+                    <label for="bookmarkTitle">标题</label>
+                    <input type="text" id="bookmarkTitle" required placeholder="网站名称">
+                </div>
+                <div class="form-group">
+                    <label>图标</label>
+                    <div class="icon-preview-container">
+                        <img id="iconPreview" src="" alt="预览" class="hidden">
+                        <div class="icon-options">
+                            <label class="radio-label">
+                                <input type="radio" name="iconType" value="favicon" checked> 自动获取 Favicon
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="iconType" value="custom"> 自定义图片
+                            </label>
+                        </div>
+                        <input type="file" id="customIconInput" accept="image/*" class="hidden">
+                        <div id="autoIconControls" class="icon-results-controls hidden">
+                            <button type="button" id="refreshIconsBtn" class="btn-secondary btn-compact">重新获取图标</button>
+                        </div>
+                        <div id="autoIconResults" class="auto-icon-results hidden">
+                            <p class="icon-results-tip">选择一个图标源：</p>
+                            <div id="iconResultsGrid" class="icon-results-grid"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bookmarkCategory">分类</label>
+                    <select id="bookmarkCategory">
+                        <!-- 选项由 JS 生成 -->
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancelBookmarkBtn" class="btn-secondary">取消</button>
+                    <button type="submit" class="btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 模态框：添加分类 -->
+    <div id="categoryModal" class="modal hidden">
+        <div class="modal-content">
+            <h3>添加分类</h3>
+            <form id="categoryForm">
+                <div class="form-group">
+                    <label for="categoryName">分类名称</label>
+                    <input type="text" id="categoryName" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancelCategoryBtn" class="btn-secondary">取消</button>
+                    <button type="submit" class="btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 模态框：设置 -->
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content">
+            <h3>设置</h3>
+            <div class="settings-section">
+                <h4>数据存储位置</h4>
+                <div class="radio-list">
+                    <label class="radio-label">
+                        <input type="radio" name="storageMode" value="browser" checked>
+                        浏览器存储（仅此设备）
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="storageMode" value="sync">
+                        账号同步（随 Edge 登录同步）
+                    </label>
+                </div>
+                <div class="storage-info">
+                    <div id="browserStorageInfo" class="storage-info-item">
+                        <h5>浏览器存储</h5>
+                        <p>保存在 Edge 扩展专属的 storage.local（edge://extensions → 本扩展 → “检查视图” → Application → Storage → Extension Storage）。仅绑定当前设备/配置文件，可手动复制目录备份。</p>
+                        <p class="path-tip">物理路径位于 Edge 用户数据目录下的 <code>Local Extension Settings/&lt;扩展 ID&gt;</code>。</p>
+                    </div>
+                    <div id="syncStorageInfo" class="storage-info-item hidden">
+                        <h5>账号同步</h5>
+                        <p>通过 chrome.storage.sync 与 Edge/Chrome 登录账号同步，适合多设备共享。受浏览器同步配额限制（~100KB），数据过大时请改用浏览器存储或导出备份。</p>
+                        <p class="path-tip">可在 edge://sync-internals 查看同步状态；数据保存在浏览器账号云端。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h4>数据转移</h4>
+                <div class="settings-actions">
+                    <button id="exportDataBtn" class="btn-secondary" type="button">导出数据</button>
+                    <label for="importDataInput" class="btn-secondary import-label">导入数据</label>
+                    <input type="file" id="importDataInput" accept="application/json" class="hidden" />
+                </div>
+                <p class="tips">导出为 JSON 文件，可用于备份或导入至其他设备。</p>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" id="closeSettingsBtn" class="btn-primary">完成</button>
+            </div>
+        </div>
+    </div>
+
+    <button type="button" id="settingsBtn" class="settings-fab" title="设置">⚙</button>
+
+    <script src="js/script.js"></script>
+</body>
+</html>

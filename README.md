@@ -21,15 +21,15 @@
 
 ### 📋 目录
 
--   [功能特性](#功能特性)
--   [快速开始](#快速开始)
--   [详细功能说明](#详细功能说明)
--   [关键常量配置](#关键常量配置)
--   [数据同步](#数据同步)
--   [开发指南](#开发指南)
--   [常见问题](#常见问题)
--   [许可证](#许可证)
--   [联系方式](#联系方式)
+-   [功能特性](#-功能特性)
+-   [快速开始](#-快速开始)
+-   [详细功能说明](#-详细功能说明)
+-   [关键常量配置](#-关键常量配置)
+-   [数据同步](#-数据同步)
+-   [开发指南](#-开发指南)
+-   [常见问题](#-常见问题)
+-   [许可证](#-许可证)
+-   [联系方式](#-联系方式)
 
 ---
 
@@ -480,12 +480,12 @@ const DRAG_LONG_PRESS_MS = 90; // 长按 90ms 激活拖拽
     -   图片格式不支持
     -   图片链接失效
     -   浏览器存储配额已满
-    -   受服务商限制
+    -   受服务商限制，图片尺寸太大
 -   **解决**：
     -   确保图片格式为 jpg/png/webp/avif/gif
     -   使用图片链接模式（无大小限制）
     -   检查浏览器存储空间（`edge://settings/storageAccessPermissions`）
-    -   使用自建的 WebDav 服务（已验证稳定性）
+    -   使用自建的 WebDav 服务（已验证稳定性），或使用更小文件大小的图片
 
 #### 3. WebDAV 同步失败怎么办？
 
@@ -555,15 +555,15 @@ This project is 100% coded by AI. Thanks to Claude Sonnet 4.5, Gemini3 Pro, and 
 
 ### 📋 Table of Contents
 
--   [Features](#features)
--   [Quick Start](#quick-start)
--   [Detailed Feature Description](#detailed-feature-description)
--   [Key Configuration Constants](#key-configuration-constants)
--   [Data Synchronization](#data-synchronization)
--   [Development Guide](#development-guide)
--   [FAQ](#faq)
--   [License](#license-1)
--   [Contact](#contact)
+-   [Features](#-features)
+-   [Quick Start](#-quick-start)
+-   [Detailed Feature Description](#-detailed-feature-description)
+-   [Key Configuration Constants](#-key-configuration-constants)
+-   [Data Synchronization](#-data-synchronization)
+-   [Development Guide](#-development-guide)
+-   [FAQ](#-faq)
+-   [License](#-license)
+-   [Contact](#-contact)
 
 ---
 

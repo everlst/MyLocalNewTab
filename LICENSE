@@ -1,54 +1,34 @@
-DUAL LICENSE
+GNU AFFERO GENERAL PUBLIC LICENSE WITH COMMERCIAL OPTION
 
-Copyright (c) 2025 hhhhhhsx
+Copyright (C) 2025 everlst
 
-This software is available under two different licenses:
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-================================================================================
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
 
-1. # NON-COMMERCIAL LICENSE (Free)
-
-Permission is hereby granted, free of charge, to any individual or non-profit
-organization obtaining a copy of this software and associated documentation
-files (the "Software"), to use, copy, modify, and distribute the Software for
-NON-COMMERCIAL purposes only, subject to the following conditions:
-
--   The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
--   The Software may NOT be used for any commercial purposes, including but not
-    limited to:
-
-    -   Selling the Software or derivatives
-    -   Using the Software in a commercial product or service
-    -   Using the Software to generate revenue directly or indirectly
-
--   Any modifications or derivative works must also be distributed under this
-    same non-commercial license.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-# ================================================================================ 2. COMMERCIAL LICENSE (Paid)
-
-For commercial use, including but not limited to:
-
--   Integration into commercial products or services
--   Use in revenue-generating applications
--   Distribution as part of commercial software
-
-You must obtain a separate commercial license.
-
-To purchase a commercial license, please contact: everlastingk@163.com
-
-Commercial licensing terms and pricing will be provided upon request.
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ================================================================================
 
-If you are unsure which license applies to your use case, please contact us
-for clarification.
+COMMERCIAL LICENSE OPTION
+
+For commercial use that requires exemption from the AGPL-3.0 copyleft 
+requirements, a commercial license is available. 
+
+Commercial licenses are required for:
+- Distributing this software as part of a proprietary/closed-source product
+- Using this software in a service without releasing your modifications
+- Creating proprietary derivative works
+
+To purchase a commercial license, contact: everlastingk@163.com
+
+================================================================================
+
+Full AGPL-3.0 license text: https://www.gnu.org/licenses/agpl-3.0.txt

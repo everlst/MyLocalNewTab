@@ -652,6 +652,11 @@ async function initializeApp() {
     // 4. 初始化数据
     await loadData({ localSnapshot: dataResult[STORAGE_KEYS.DATA] });
 
+    // 每次新建标签页都重置到第一个分类，不记忆上次选择
+    if (appData.categories && appData.categories.length > 0) {
+        appData.activeCategory = appData.categories[0].id;
+    }
+
     // 渲染与事件绑定
     renderApp();
     if (els.searchEngineSelect) {

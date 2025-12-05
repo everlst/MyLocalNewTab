@@ -26,6 +26,7 @@
     --overlay: rgba(0,0,0,0.45);
     --custom-bg-image: none;
     --custom-bg-opacity: 0;
+    --ui-opacity: 1;
     --radius: 8px;
 }
 
@@ -55,6 +56,7 @@
     --scrollbar-thumb: rgba(255,255,255,0.2);
     --scrollbar-thumb-hover: rgba(255,255,255,0.35);
     --overlay: rgba(0,0,0,0.6);
+    --ui-opacity: 1;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -175,7 +177,7 @@ body.custom-bg-enabled::before {
 }
 
 .container.visible {
-    opacity: 1;
+    opacity: var(--ui-opacity, 1);
 }
 
 /* Header & Search */
@@ -273,6 +275,7 @@ header {
     justify-content: center;
     z-index: 1200;
     padding: 0;
+    opacity: var(--ui-opacity, 1);
     transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
@@ -669,6 +672,7 @@ main {
     transform-origin: center center;
     display: flex;
     flex-direction: column;
+    opacity: var(--ui-opacity, 1);
     will-change: transform, opacity;
 }
 

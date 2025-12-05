@@ -80,7 +80,8 @@ const DEFAULT_SETTINGS = {
         gistId: '',
         filename: 'edgeTab-data.json'
     },
-    background: JSON.parse(JSON.stringify(DEFAULT_BACKGROUND))
+    background: JSON.parse(JSON.stringify(DEFAULT_BACKGROUND)),
+    uiOpacity: 1
 };
 
 const DEFAULT_SWATCH_COLOR = '#4ac55c';
@@ -135,6 +136,24 @@ function normalizeBackgroundSettings(raw = {}) {
     };
 }
 
+function normalizeUiOpacity(value) {
+    return clamp01(value ?? DEFAULT_SETTINGS.uiOpacity, DEFAULT_SETTINGS.uiOpacity);
+}
+
+function getUiOpacity(value = appSettings.uiOpacity) {
+    return normalizeUiOpacity(value);
+}
+
+function applyUiOpacity(value = appSettings.uiOpacity) {
+    const opacity = normalizeUiOpacity(value);
+    appSettings.uiOpacity = opacity;
+    const root = document.documentElement;
+    if (root) {
+        root.style.setProperty('--ui-opacity', opacity);
+    }
+    return opacity;
+}
+
 function mergeSettingsWithDefaults(raw = {}) {
     const base = raw && typeof raw === 'object' ? raw : {};
     const background = normalizeBackgroundSettings(base.background);
@@ -143,6 +162,7 @@ function mergeSettingsWithDefaults(raw = {}) {
         ...base,
         webdav: { ...DEFAULT_SETTINGS.webdav, ...(base.webdav || {}) },
         gist: { ...DEFAULT_SETTINGS.gist, ...(base.gist || {}) },
+        uiOpacity: normalizeUiOpacity(base.uiOpacity),
         background
     };
 }
@@ -186,7 +206,8 @@ const DEFAULT_DATA = {
         }
     ],
     activeCategory: 'cat_default',
-    background: normalizeBackgroundSettings(DEFAULT_BACKGROUND)
+    background: normalizeBackgroundSettings(DEFAULT_BACKGROUND),
+    uiOpacity: DEFAULT_SETTINGS.uiOpacity
 };
 
 let appData = JSON.parse(JSON.stringify(DEFAULT_DATA));
@@ -550,6 +571,8 @@ const els = {
     backgroundUrlInput: document.getElementById('backgroundUrlInput'),
     backgroundOpacity: document.getElementById('backgroundOpacity'),
     backgroundOpacityValue: document.getElementById('backgroundOpacityValue'),
+    uiOpacity: document.getElementById('uiOpacity'),
+    uiOpacityValue: document.getElementById('uiOpacityValue'),
     backgroundPreview: document.getElementById('backgroundPreview'),
     folderModal: document.getElementById('folderModal'),
     folderModalTitle: document.getElementById('folderModalTitle'),
@@ -634,6 +657,8 @@ async function initializeApp() {
         appSettings = mergeSettingsWithDefaults();
         saveSettings();
     }
+
+    applyUiOpacity(appSettings.uiOpacity);
     
     pendingStorageMode = appSettings.storageMode || STORAGE_MODES.BROWSER;
     remoteActionsEnabled = isRemoteMode(pendingStorageMode);
@@ -707,6 +732,7 @@ async function loadSettings() {
                 appSettings = mergeSettingsWithDefaults();
                 saveSettings();
             }
+            applyUiOpacity(appSettings.uiOpacity);
             applyBackgroundFromSettings();
             updateBackgroundControlsUI();
             resolve();
@@ -804,6 +830,7 @@ async function loadData(options = {}) {
     }
 
     maybeSyncBackgroundFromData(appData, { saveSettingsFlag: true });
+    maybeSyncUiOpacityFromData(appData, { saveSettingsFlag: true });
     attachBackgroundToData(appData);
     ensureActiveCategory();
     const normalized = normalizeDataStructure();
@@ -1300,6 +1327,7 @@ async function handleRemoteSyncAction(action) {
         }
 
         maybeSyncBackgroundFromData(appData, { saveSettingsFlag: true });
+        maybeSyncUiOpacityFromData(appData, { saveSettingsFlag: true });
         attachBackgroundToData(appData);
         ensureActiveCategory();
         normalizeDataStructure();
@@ -2894,7 +2922,8 @@ function animateModalVisibility(modal, { open, anchorRect, onHidden } = {}) {
     const toTransform = open ? 'translate3d(0,0,0) scale(1)' : (anchorTransform || fallbackClosedTransform);
     const startBackdropOpacity = wasHidden ? 0 : backdropFromOpacity;
     const startContentOpacity = wasHidden ? 0 : contentFromOpacity;
-    const contentToOpacity = open ? 1 : 0;
+    const targetUiOpacity = getUiOpacity();
+    const contentToOpacity = open ? targetUiOpacity : 0;
 
     modal.style.visibility = 'visible';
     document.body.classList.add('modal-open');
@@ -3511,6 +3540,7 @@ function handleImportDataFile(file, source = IMPORT_SOURCES.EDGE_TAB, mode = IMP
             ensureActiveCategory();
             normalizeDataStructure();
             maybeSyncBackgroundFromData(appData, { saveSettingsFlag: true });
+            maybeSyncUiOpacityFromData(appData, { saveSettingsFlag: true });
             attachBackgroundToData(appData);
             saveData();
             renderApp();
@@ -3623,6 +3653,11 @@ function mergeImportedData(current, incoming) {
     const incomingBg = extractBackgroundFromData(incoming);
     const baseBg = extractBackgroundFromData(result) || extractBackgroundFromData(current);
     result.background = normalizeBackgroundSettings(incomingBg || baseBg || DEFAULT_SETTINGS.background);
+
+    const mergedUiOpacity = normalizeUiOpacity(
+        incoming?.uiOpacity ?? result.uiOpacity ?? current?.uiOpacity ?? DEFAULT_SETTINGS.uiOpacity
+    );
+    result.uiOpacity = mergedUiOpacity;
 
     return result;
 }
@@ -4282,6 +4317,13 @@ function extractBackgroundFromData(data) {
     return null;
 }
 
+function extractUiOpacityFromData(data) {
+    if (!data || typeof data !== 'object') return null;
+    const value = data.uiOpacity;
+    if (value === undefined || value === null) return null;
+    return normalizeUiOpacity(value);
+}
+
 function maybeSyncBackgroundFromData(data, { saveSettingsFlag = false } = {}) {
     const bg = extractBackgroundFromData(data);
     if (!bg) return false;
@@ -4303,6 +4345,17 @@ function maybeSyncBackgroundFromData(data, { saveSettingsFlag = false } = {}) {
     return true;
 }
 
+function maybeSyncUiOpacityFromData(data, { saveSettingsFlag = false } = {}) {
+    const value = extractUiOpacityFromData(data);
+    if (value === null) return false;
+    appSettings.uiOpacity = normalizeUiOpacity(value);
+    applyUiOpacity(appSettings.uiOpacity);
+    if (saveSettingsFlag) {
+        saveSettings();
+    }
+    return true;
+}
+
 function attachBackgroundToData(data) {
     if (!data || typeof data !== 'object') return data;
     const normalized = normalizeBackgroundSettings(appSettings.background);
@@ -4310,6 +4363,7 @@ function attachBackgroundToData(data) {
     const shouldStripImage = normalized.mode === 'cloud' || (isRemoteMode(appSettings.storageMode) && isDataUrl);
     const backgroundForData = shouldStripImage ? { ...normalized, image: '' } : normalized;
     data.background = backgroundForData;
+    data.uiOpacity = getUiOpacity();
     return data;
 }
 
@@ -4703,6 +4757,15 @@ async function handleBackgroundSourceChange() {
 }
 
 function updateBackgroundControlsUI() {
+    const uiOpacity = applyUiOpacity(appSettings.uiOpacity);
+    const uiOpacityPercent = Math.round(uiOpacity * 100);
+    if (els.uiOpacity) {
+        els.uiOpacity.value = uiOpacityPercent;
+    }
+    if (els.uiOpacityValue) {
+        els.uiOpacityValue.textContent = `${uiOpacityPercent}%`;
+    }
+
     const background = normalizeBackgroundSettings(appSettings.background);
     const storageMode = getEffectiveStorageMode();
     const remoteReady = isRemoteBackgroundReady();
@@ -4867,6 +4930,24 @@ function updateBackgroundControlsUI() {
     }
     if (isCloudMode && remoteReady && !hasAnyImage) {
         refreshCloudBackgroundFromRemote({ notifyWhenMissing: false });
+    }
+}
+
+function handleUiOpacityInput(event, { persist = false } = {}) {
+    const slider = event?.target || els.uiOpacity;
+    if (!slider) return;
+    const raw = parseInt(slider.value, 10);
+    const opacity = normalizeUiOpacity(raw / 100);
+    applyUiOpacity(opacity);
+    if (appData && typeof appData === 'object') {
+        appData.uiOpacity = opacity;
+    }
+    if (els.uiOpacityValue) {
+        els.uiOpacityValue.textContent = `${Math.round(opacity * 100)}%`;
+    }
+    if (persist) {
+        saveSettings();
+        saveData();
     }
 }
 
@@ -5285,6 +5366,10 @@ function bindBackgroundControls() {
             }
         });
     }
+    if (els.uiOpacity) {
+        els.uiOpacity.addEventListener('input', handleUiOpacityInput);
+        els.uiOpacity.addEventListener('change', (e) => handleUiOpacityInput(e, { persist: true }));
+    }
     if (els.backgroundOpacity) {
         els.backgroundOpacity.addEventListener('input', handleBackgroundOpacityInput);
         els.backgroundOpacity.addEventListener('change', (e) => {
@@ -5384,6 +5469,7 @@ function syncSettingsFromUI() {
             gistId: (els.gistId?.value || '').trim(),
             filename: normalizeRemoteFilename(els.gistFilename?.value || appSettings.gist?.filename)
         },
+        uiOpacity: els.uiOpacity ? parseInt(els.uiOpacity.value, 10) / 100 : appSettings.uiOpacity,
         background: normalizeBackgroundSettings({
             ...appSettings.background,
             mode: bgMode === 'cloud' ? 'cloud' : 'local',
@@ -5391,6 +5477,9 @@ function syncSettingsFromUI() {
             image: appSettings.background?.image
         })
     });
+    if (appData && typeof appData === 'object') {
+        appData.uiOpacity = appSettings.uiOpacity;
+    }
     applyBackgroundFromSettings();
     updateBackgroundControlsUI();
 }

@@ -1,16 +1,30 @@
-MIT License
+DUAL LICENSE
 
 Copyright (c) 2025 hhhhhhsx
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software is available under two different licenses:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+================================================================================
+
+1. # NON-COMMERCIAL LICENSE (Free)
+
+Permission is hereby granted, free of charge, to any individual or non-profit
+organization obtaining a copy of this software and associated documentation
+files (the "Software"), to use, copy, modify, and distribute the Software for
+NON-COMMERCIAL purposes only, subject to the following conditions:
+
+-   The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+-   The Software may NOT be used for any commercial purposes, including but not
+    limited to:
+
+    -   Selling the Software or derivatives
+    -   Using the Software in a commercial product or service
+    -   Using the Software to generate revenue directly or indirectly
+
+-   Any modifications or derivative works must also be distributed under this
+    same non-commercial license.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,3 +33,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+# ================================================================================ 2. COMMERCIAL LICENSE (Paid)
+
+For commercial use, including but not limited to:
+
+-   Integration into commercial products or services
+-   Use in revenue-generating applications
+-   Distribution as part of commercial software
+
+You must obtain a separate commercial license.
+
+To purchase a commercial license, please contact: everlastingk@163.com
+
+Commercial licensing terms and pricing will be provided upon request.
+
+================================================================================
+
+If you are unsure which license applies to your use case, please contact us
+for clarification.

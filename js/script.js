@@ -4516,16 +4516,18 @@ async function cleanupOldCloudBackgroundFiles(newFileName, previousFileName, sto
     const mode = storageMode || getEffectiveStorageMode();
     if (!isRemoteMode(mode)) return;
     const cleanNew = (newFileName || '').trim();
-    const targets = buildBackgroundCandidates(cleanNew).filter(name => name && name !== cleanNew);
-    if (previousFileName && previousFileName !== cleanNew && !targets.includes(previousFileName)) {
-        targets.unshift(previousFileName);
-    }
-    if (!targets.length) return;
 
     if (mode === STORAGE_MODES.WEBDAV) {
         const cfg = normalizeWebdavConfig(appSettings.webdav);
         const base = getWebdavBaseUrl(cfg.endpoint);
         if (!cfg.endpoint || !base) return;
+        
+        // 删除所有可能的旧背景文件（所有格式变体）
+        const targets = buildBackgroundCandidates(cleanNew).filter(name => name && name !== cleanNew);
+        if (previousFileName && previousFileName !== cleanNew && !targets.includes(previousFileName)) {
+            targets.unshift(previousFileName);
+        }
+        
         for (const name of targets) {
             const remoteUrl = base.endsWith('/') ? `${base}${encodeURIComponent(name)}` : `${base}/${encodeURIComponent(name)}`;
             try {
@@ -4540,19 +4542,45 @@ async function cleanupOldCloudBackgroundFiles(newFileName, previousFileName, sto
         }
         return;
     }
+    
     if (mode === STORAGE_MODES.GIST) {
         const cfg = normalizeGistConfig(appSettings.gist);
         if (!cfg.token || !cfg.gistId) return;
-        const files = {};
-        targets.forEach(name => {
-            files[name] = null;
-        });
+        
         try {
-            await fetchWithTimeout(`https://api.github.com/gists/${cfg.gistId}`, {
-                method: 'PATCH',
+            // 先获取 Gist 的所有文件列表
+            const response = await fetchWithTimeout(`https://api.github.com/gists/${cfg.gistId}`, {
+                method: 'GET',
                 headers: buildGistHeaders(cfg.token),
-                body: JSON.stringify({ files })
+                cache: 'no-store'
             }, REMOTE_FETCH_TIMEOUT);
+            
+            if (!response.ok) {
+                console.warn('获取 Gist 文件列表失败', response.status);
+                return;
+            }
+            
+            const gist = await response.json();
+            const existingFiles = gist?.files || {};
+            
+            // 找出所有需要删除的背景图文件
+            const filesToDelete = {};
+            Object.keys(existingFiles).forEach(fileName => {
+                // 匹配 background.* 格式的文件，但排除新上传的文件
+                if (fileName.startsWith('background.') && fileName !== cleanNew) {
+                    filesToDelete[fileName] = null; // null 表示删除
+                }
+            });
+            
+            // 如果有旧文件需要删除，执行删除操作
+            if (Object.keys(filesToDelete).length > 0) {
+                await fetchWithTimeout(`https://api.github.com/gists/${cfg.gistId}`, {
+                    method: 'PATCH',
+                    headers: buildGistHeaders(cfg.token),
+                    body: JSON.stringify({ files: filesToDelete })
+                }, REMOTE_FETCH_TIMEOUT);
+                console.log('已清理旧 Gist 背景文件:', Object.keys(filesToDelete));
+            }
         } catch (error) {
             console.warn('清理旧 Gist 背景失败', error);
         }
@@ -4877,15 +4905,15 @@ async function handleBackgroundImageChange(event) {
     // 根据存储模式设置不同的大小限制
     // 浏览器本地存储：2MB（压缩后约2.66MB，考虑其他设置数据）
     // WebDAV：无限制（WebDAV支持二进制，服务器自行控制大小）
-    // Gist：5MB（Gist存储Base64文本，会增加约33%体积，且单文件限制10MB）
+    // Gist：4MB（Base64 文本有体积膨胀，控制在安全上限内）
     const isGist = storageMode === STORAGE_MODES.GIST;
     const isWebDAV = storageMode === STORAGE_MODES.WEBDAV;
-    const MAX_SIZE = isGist ? 5 * 1024 * 1024 : (isWebDAV ? Infinity : (isRemote ? Infinity : 2 * 1024 * 1024));
-    const MAX_COMPRESSED_SIZE = isGist ? 6 * 1024 * 1024 : (isWebDAV ? Infinity : (isRemote ? Infinity : 3 * 1024 * 1024));
+    const MAX_SIZE = isGist ? 4 * 1024 * 1024 : (isWebDAV ? Infinity : (isRemote ? Infinity : 2 * 1024 * 1024));
+    const MAX_COMPRESSED_SIZE = isGist ? 4 * 1024 * 1024 : (isWebDAV ? Infinity : (isRemote ? Infinity : 3 * 1024 * 1024));
     const MAX_RESOLUTION = isRemote ? 3840 : 1920; // 4K 分辨率支持（3840x2160）
     
     const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-    const limitMB = (MAX_SIZE / 1024 / 1024).toFixed(0);
+    const limitMB = Number.isFinite(MAX_SIZE) ? (MAX_SIZE / 1024 / 1024).toFixed(0) : '∞';
     
     if (file.size > MAX_SIZE) {
         let storageTip;
@@ -4910,10 +4938,12 @@ async function handleBackgroundImageChange(event) {
         let imageDataUrl;
         
         // 如果图片较大，尝试压缩
-        if (file.size > MAX_SIZE) {
-            // Gist需要更激进的压缩,因为Base64会增加33%体积
-            // WebDAV无限制，不压缩
-            const targetSizeMB = isGist ? 4 : (isWebDAV ? Infinity : (isRemote ? 8 : 1.5));
+        if (isGist) {
+            // Gist 模式：统一压缩/转码，确保请求体不会超限
+            imageDataUrl = await encodeImageForGist(file);
+        } else if (file.size > MAX_SIZE) {
+            // WebDAV无限制，不压缩；其他远端/本地按需压缩
+            const targetSizeMB = isWebDAV ? Infinity : (isRemote ? 8 : 1.5);
             imageDataUrl = await compressImage(file, { 
                 maxSizeMB: targetSizeMB, 
                 maxWidthOrHeight: MAX_RESOLUTION 
@@ -5014,7 +5044,7 @@ async function handleBackgroundImageChange(event) {
 }
 
 async function compressImage(file, options = {}) {
-    const { maxSizeMB = 1.5, maxWidthOrHeight = 1920, quality = 0.85 } = options;
+    const { maxSizeMB = 4, maxWidthOrHeight = 3840, quality = 0.95 } = options;
     
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -5059,6 +5089,90 @@ async function compressImage(file, options = {}) {
         reader.onerror = reject;
         reader.readAsDataURL(file);
     });
+}
+
+// --- Gist 专用图片压缩/编码（PNG/JPG 统一走 JPEG 压缩，确保大小可控） ---
+const GIST_IMAGE_MAX_BYTES = 4096 * 1024; // 约 4MB 上限，避免请求体过大
+const GIST_IMAGE_MAX_WIDTH = 3840; // 与 4K 接近的宽度上限，等比缩放
+const GIST_JPEG_INITIAL_QUALITY = 0.8;
+
+function estimateBytesFromDataUrl(dataUrl = '') {
+    if (!dataUrl) return 0;
+    const commaIdx = dataUrl.indexOf(',');
+    const base64 = commaIdx === -1 ? dataUrl : dataUrl.slice(commaIdx + 1);
+    return Math.floor(base64.length * 3 / 4);
+}
+
+async function loadImageBitmap(file) {
+    if (typeof createImageBitmap === 'function') {
+        return createImageBitmap(file);
+    }
+    // 兼容不支持 createImageBitmap 的环境
+    const dataUrl = await blobToDataURL(file);
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = dataUrl;
+    });
+}
+
+async function compressImageToJpegDataUrl(file, options = {}) {
+    const {
+        maxBytes = GIST_IMAGE_MAX_BYTES,
+        maxWidth = GIST_IMAGE_MAX_WIDTH,
+        initialQuality = GIST_JPEG_INITIAL_QUALITY,
+        minQuality = 0.4,
+        qualityStep = 0.1
+    } = options;
+
+    const bitmap = await loadImageBitmap(file);
+    let width = bitmap.width;
+    let height = bitmap.height;
+    if (width > maxWidth) {
+        const scale = maxWidth / width;
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context not available');
+    ctx.drawImage(bitmap, 0, 0, width, height);
+
+    let quality = initialQuality;
+    let lastDataUrl = '';
+    while (quality >= minQuality) {
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        lastDataUrl = dataUrl;
+        if (estimateBytesFromDataUrl(dataUrl) <= maxBytes) {
+            return dataUrl;
+        }
+        quality = Number((quality - qualityStep).toFixed(2));
+    }
+    return lastDataUrl;
+}
+
+async function encodeImageForGist(file) {
+    // 小文件直接转 DataURL，避免额外压缩损失
+    if (file.size <= GIST_IMAGE_MAX_BYTES) {
+        return blobToDataURL(file);
+    }
+
+    const compressed = await compressImageToJpegDataUrl(file, {
+        maxBytes: GIST_IMAGE_MAX_BYTES,
+        maxWidth: GIST_IMAGE_MAX_WIDTH,
+        initialQuality: GIST_JPEG_INITIAL_QUALITY,
+        minQuality: 0.4,
+        qualityStep: 0.1
+    });
+
+    if (estimateBytesFromDataUrl(compressed) > GIST_IMAGE_MAX_BYTES) {
+        throw new Error('图片压缩后仍然过大，无法同步到 Gist，请裁剪或降低分辨率后重试。');
+    }
+    return compressed;
 }
 
 function saveSettingsWithValidation() {

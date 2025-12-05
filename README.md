@@ -4,7 +4,7 @@
 
 **一个简洁、本地化、功能丰富的浏览器新标签页扩展**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Chrome Extension Manifest](https://img.shields.io/badge/manifest-v3-brightgreen.svg)](manifest.json)
 
 [English](#english) | [简体中文](#简体中文)
@@ -544,7 +544,24 @@ const DRAG_LONG_PRESS_MS = 90; // 长按 90ms 激活拖拽
 
 ### 📄 许可证
 
-本项目采用 [MIT 许可证](LICENSE)。
+本项目采用双重许可证：
+
+- **🆓 AGPL-3.0** 用于开源使用（免费）
+- **💼 商业许可证** 用于商业使用（付费）
+
+#### 开源使用 (AGPL-3.0)
+
+免费提供给个人、开源项目和愿意以下条件的公司：
+- 在 AGPL-3.0 许可证下发布其修改
+- 与使用该软件的用户共享源代码
+
+#### 商业使用
+
+如需在闭源产品或服务中使用本软件且不受 AGPL-3.0 要求的约束，请联系我们获取商业许可证。
+
+**联系方式:** everlastingk@163.com
+
+详见 [LICENSE](LICENSE) 文件。
 
 ### 📮 联系方式
 
@@ -1078,7 +1095,25 @@ const DRAG_LONG_PRESS_MS = 90; // 90ms long-press to activate drag
 
 ### 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is dual-licensed:
+
+- **🆓 AGPL-3.0** for open-source use (free)
+- **💼 Commercial License** for proprietary use (paid)
+
+#### Open Source Use (AGPL-3.0)
+
+Free for individuals, open-source projects, and companies willing to:
+- Release their modifications under AGPL-3.0
+- Share source code with users interacting with the software
+
+#### Commercial Use
+
+For using this software in closed-source products or services without the 
+AGPL-3.0 requirements, please contact us for a commercial license.
+
+**Contact:** everlastingk@163.com
+
+See [LICENSE](LICENSE) for full details.
 
 ### 📮 Contact
 

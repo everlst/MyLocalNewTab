@@ -193,6 +193,18 @@ const syncWarningState = {
 };
 
 // 默认数据
+// 优化深拷贝函数
+function deepClone(obj) {
+    if (typeof structuredClone === 'function') {
+        try {
+            return structuredClone(obj);
+        } catch (e) {
+            // 某些对象无法被 structuredClone，回退到 JSON 方式
+        }
+    }
+    return JSON.parse(JSON.stringify(obj));
+}
+
 const DEFAULT_DATA = {
     categories: [
         { 
@@ -210,7 +222,7 @@ const DEFAULT_DATA = {
     uiOpacity: DEFAULT_SETTINGS.uiOpacity
 };
 
-let appData = JSON.parse(JSON.stringify(DEFAULT_DATA));
+let appData = deepClone(DEFAULT_DATA);
 let appSettings = { ...DEFAULT_SETTINGS };
 let iconCache = {};
 let autoIconCandidates = [];
@@ -450,9 +462,11 @@ function removeBookmarkById(bookmarkId) {
 
 function checkAndRemoveEmptyFolder(folderId, categoryId) {
     if (!folderId) return;
-    const list = getBookmarkList(categoryId, folderId);
+    const folderLoc = findBookmarkLocation(folderId);
+    if (!folderLoc || folderLoc.bookmark.type !== 'folder') return;
     
-    if (!list) return;
+    const list = folderLoc.bookmark.children;
+    if (!Array.isArray(list)) return;
 
     if (list.length === 0) {
         removeBookmarkById(folderId);
@@ -466,8 +480,6 @@ function checkAndRemoveEmptyFolder(folderId, categoryId) {
             return;
         }
         // 文件夹仅剩一个图标时，自动解散文件夹
-        const folderLoc = findBookmarkLocation(folderId);
-        
         if (folderLoc && Array.isArray(folderLoc.listRef)) {
             // 移除文件夹
             folderLoc.listRef.splice(folderLoc.index, 1);
@@ -633,24 +645,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initializeApp() {
     syncThemeWithSystem();
     
-    // 优化：优先加载设置和背景图，尽快渲染背景
-    const settingsPromise = new Promise(resolve => {
-        chrome.storage.local.get([STORAGE_KEYS.SETTINGS, STORAGE_KEYS.BACKGROUND_IMAGE], resolve);
+    // 并行加载所有本地数据（设置、背景图、缓存、数据）
+    const localDataPromise = new Promise(resolve => {
+        chrome.storage.local.get([
+            STORAGE_KEYS.SETTINGS,
+            STORAGE_KEYS.BACKGROUND_IMAGE,
+            CACHE_KEYS.ICONS,
+            STORAGE_KEYS.DATA
+        ], resolve);
     });
 
-    // 并行加载数据和图标缓存
-    const dataPromise = new Promise(resolve => {
-        chrome.storage.local.get([CACHE_KEYS.ICONS, STORAGE_KEYS.DATA], resolve);
-    });
+    // 1. 等待本地数据加载
+    const localResult = await localDataPromise;
 
-    // 1. 初始化设置与背景
-    const settingsResult = await settingsPromise;
-    if (settingsResult[STORAGE_KEYS.SETTINGS]) {
-        appSettings = mergeSettingsWithDefaults(settingsResult[STORAGE_KEYS.SETTINGS]);
+    // 2. 初始化设置
+    if (localResult[STORAGE_KEYS.SETTINGS]) {
+        appSettings = mergeSettingsWithDefaults(localResult[STORAGE_KEYS.SETTINGS]);
         // 恢复分离存储的背景图
-        if (appSettings.background.mode === 'local' && settingsResult[STORAGE_KEYS.BACKGROUND_IMAGE]) {
+        if (appSettings.background.mode === 'local' && localResult[STORAGE_KEYS.BACKGROUND_IMAGE]) {
             if (!appSettings.background.image || appSettings.background.image === 'Check_STORAGE_KEYS_BACKGROUND_IMAGE') {
-                appSettings.background.image = settingsResult[STORAGE_KEYS.BACKGROUND_IMAGE];
+                appSettings.background.image = localResult[STORAGE_KEYS.BACKGROUND_IMAGE];
             }
         }
     } else {
@@ -663,45 +677,128 @@ async function initializeApp() {
     pendingStorageMode = appSettings.storageMode || STORAGE_MODES.BROWSER;
     remoteActionsEnabled = isRemoteMode(pendingStorageMode);
     
-    // 立即应用背景，并等待预加载完成（或超时）
-    // 这样可以确保背景图准备好后，再渲染内容，实现“先背景后组件”
-    await applyBackgroundFromSettings();
-    updateBackgroundControlsUI();
-
-    // 2. 等待数据加载完成
-    const dataResult = await dataPromise;
-
     // 3. 初始化图标缓存
-    iconCache = dataResult[CACHE_KEYS.ICONS] || {};
+    iconCache = localResult[CACHE_KEYS.ICONS] || {};
 
-    // 4. 初始化数据
-    await loadData({ localSnapshot: dataResult[STORAGE_KEYS.DATA] });
+    // 4. 先用本地数据准备界面（但不渲染）
+    const localSnapshot = localResult[STORAGE_KEYS.DATA];
+    if (localSnapshot && Array.isArray(localSnapshot.categories)) {
+        appData = localSnapshot;
+        ensureActiveCategory();
+    }
 
-    // 每次新建标签页都重置到第一个分类，不记忆上次选择
+    // 每次新建标签页都重置到第一个分类
     if (appData.categories && appData.categories.length > 0) {
         appData.activeCategory = appData.categories[0].id;
     }
 
-    // 渲染与事件绑定
+    // 5. 并行准备背景和渲染界面
+    // 先渲染 DOM（但容器仍然透明）
     renderApp();
     if (els.searchEngineSelect) {
         els.searchEngineSelect.value = appSettings.searchEngine || 'google';
         updateSearchPlaceholder(appSettings.searchEngine || 'google');
     }
     setupEventListeners();
+    updateBackgroundControlsUI();
+
+    // 6. 等待背景图准备完成
+    await applyBackgroundFromSettings();
+
+    // 7. 背景和内容同时淡入
+    const container = document.querySelector('.container');
+    if (container) {
+        // 使用 requestAnimationFrame 确保浏览器已完成布局
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                container.classList.add('visible');
+                // 同时为 body 添加背景淡入标记
+                document.body.classList.add('bg-ready');
+            });
+        });
+    }
+
+    // 8. 后台异步加载远端数据（不阻塞界面）
+    if (isRemoteMode(appSettings.storageMode)) {
+        syncRemoteDataInBackground(localSnapshot);
+    }
+
+    // 9. 后台预热图标缓存
     warmIconCacheForBookmarks();
+    
+    // 10. 如果是云端背景模式，后台检查更新
     if (appSettings.background?.mode === 'cloud') {
         refreshCloudBackgroundFromRemote({ notifyWhenMissing: false });
     }
+}
 
-    // 最后显示内容区域，实现淡入效果
-    const container = document.querySelector('.container');
-    if (container) {
-        // 稍微延迟一帧，确保 CSS transition 生效
-        requestAnimationFrame(() => {
-            container.classList.add('visible');
-        });
+// 后台同步远端数据，不阻塞界面渲染
+async function syncRemoteDataInBackground(localSnapshot) {
+    try {
+        const mode = appSettings.storageMode;
+        let remoteData = null;
+        
+        if (mode === STORAGE_MODES.WEBDAV) {
+            remoteData = await loadDataFromWebDAV({ localFallback: localSnapshot, notifyOnError: false });
+        } else if (mode === STORAGE_MODES.GIST) {
+            remoteData = await loadDataFromGist({ localFallback: localSnapshot, notifyOnError: false });
+        }
+        
+        if (remoteData && Array.isArray(remoteData.categories)) {
+            // 检查远端数据是否与本地不同
+            const localJson = JSON.stringify(localSnapshot?.categories || []);
+            const remoteJson = JSON.stringify(remoteData.categories);
+            
+            if (localJson !== remoteJson) {
+                // 远端有更新，更新本地数据并重新渲染
+                appData = remoteData;
+                ensureActiveCategory();
+                if (appData.categories && appData.categories.length > 0) {
+                    appData.activeCategory = appData.categories[0].id;
+                }
+                renderApp({ skipAnimation: true });
+            }
+            
+            // 同步背景设置（不重复加载已有背景）
+            maybeSyncBackgroundFromDataQuiet(remoteData);
+            maybeSyncUiOpacityFromData(remoteData, { saveSettingsFlag: true });
+            attachBackgroundToData(appData);
+            
+            // 确保本地存储是最新的
+            await persistDataToArea(chrome.storage.local, appData);
+        }
+    } catch (error) {
+        console.warn('后台同步远端数据失败', error);
     }
+}
+
+// 静默同步背景，不重复加载已显示的背景
+function maybeSyncBackgroundFromDataQuiet(data) {
+    const bg = extractBackgroundFromData(data);
+    if (!bg) return false;
+    const current = normalizeBackgroundSettings(appSettings.background);
+    
+    // 如果背景模式和关键信息相同，不重新加载
+    const isSameBackground = 
+        current.mode === bg.mode &&
+        current.image === bg.image &&
+        current.cloud?.downloadUrl === bg.cloud?.downloadUrl &&
+        current.cloud?.fileName === bg.cloud?.fileName;
+    
+    if (isSameBackground) {
+        // 只更新设置，不重新应用背景
+        appSettings.background = normalizeBackgroundSettings({
+            ...current,
+            ...bg,
+            image: bg.image || current.image,
+            cloud: { ...current.cloud, ...(bg.cloud || {}) }
+        });
+        saveSettings();
+        return false;
+    }
+    
+    // 背景确实不同，才重新加载
+    return maybeSyncBackgroundFromData(data, { saveSettingsFlag: true });
 }
 
 function updateSearchPlaceholder(engine) {
@@ -741,7 +838,7 @@ async function loadSettings() {
 }
 
 function saveSettings() {
-    const settingsToSave = JSON.parse(JSON.stringify(appSettings));
+    const settingsToSave = deepClone(appSettings);
     let bgImageToSave = null;
 
     // 如果是本地模式且有图片数据，分离存储
@@ -766,7 +863,11 @@ function saveSettings() {
         // 这里不做删除操作，以免用户误操作切换模式后丢失本地图片
     }
 
-    chrome.storage.local.set(updates);
+    chrome.storage.local.set(updates, () => {
+        if (chrome.runtime.lastError) {
+            console.warn('保存设置失败:', chrome.runtime.lastError);
+        }
+    });
 }
 
 async function loadIconCache() {
@@ -778,19 +879,27 @@ async function loadIconCache() {
     });
 }
 
+let saveIconCacheTimer = null;
 function saveIconCache() {
-    try {
-        chrome.storage.local.set({ [CACHE_KEYS.ICONS]: iconCache }, () => {
-            if (chrome.runtime.lastError) {
-                console.warn('保存图标缓存失败 (可能是配额已满):', chrome.runtime.lastError);
-                // 简单的清理策略：如果保存失败，尝试清理一半的缓存（这里简单地清空，实际应用可以更智能）
-                // 为了防止无限循环，这里只做一次尝试或者仅仅是警告
-                // 考虑到用户体验，如果满了，我们可能需要提示用户或者自动清理旧的
-            }
-        });
-    } catch (e) {
-        console.error('保存图标缓存异常:', e);
+    // 防抖保存，避免频繁写入存储
+    if (saveIconCacheTimer) {
+        clearTimeout(saveIconCacheTimer);
     }
+    saveIconCacheTimer = setTimeout(() => {
+        saveIconCacheTimer = null;
+        try {
+            chrome.storage.local.set({ [CACHE_KEYS.ICONS]: iconCache }, () => {
+                if (chrome.runtime.lastError) {
+                    console.warn('保存图标缓存失败 (可能是配额已满):', chrome.runtime.lastError);
+                    // 简单的清理策略：如果保存失败，尝试清理一半的缓存（这里简单地清空，实际应用可以更智能）
+                    // 为了防止无限循环，这里只做一次尝试或者仅仅是警告
+                    // 考虑到用户体验，如果满了，我们可能需要提示用户或者自动清理旧的
+                }
+            });
+        } catch (e) {
+            console.error('保存图标缓存异常:', e);
+        }
+    }, 500);
 }
 
 async function loadData(options = {}) {
@@ -798,7 +907,7 @@ async function loadData(options = {}) {
     const localSnapshot = options.localSnapshot !== undefined
         ? options.localSnapshot
         : await readLocalDataSnapshot();
-    const fallback = localSnapshot || JSON.parse(JSON.stringify(DEFAULT_DATA));
+    const fallback = localSnapshot || deepClone(DEFAULT_DATA);
 
     if (mode === STORAGE_MODES.SYNC) {
         await new Promise((resolve) => {
@@ -864,12 +973,27 @@ async function loadFolderFromLocalSnapshot(folderId) {
     }
 }
 
+let saveDataDebounceTimer = null;
 async function saveData(options = {}) {
-    try {
-        await persistAppData(appData, options);
-    } catch (error) {
-        console.error('保存数据失败:', error);
+    // 防抖保存，避免频繁写入
+    if (saveDataDebounceTimer) {
+        clearTimeout(saveDataDebounceTimer);
     }
+    return new Promise((resolve, reject) => {
+        saveDataDebounceTimer = setTimeout(async () => {
+            saveDataDebounceTimer = null;
+            try {
+                await persistAppData(appData, options);
+                resolve();
+            } catch (error) {
+                console.error('保存数据失败:', error);
+                if (options.notifyOnError) {
+                    alert(`保存数据失败: ${error.message}`);
+                }
+                reject(error);
+            }
+        }, 100);
+    });
 }
 
 async function persistAppData(data, { mode = appSettings.storageMode, notifyOnError = false } = {}) {
@@ -904,12 +1028,18 @@ async function persistAppData(data, { mode = appSettings.storageMode, notifyOnEr
 }
 
 function persistDataToArea(area, data) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         if (!area || typeof area.set !== 'function') {
             resolve();
             return;
         }
-        area.set({ [STORAGE_KEYS.DATA]: data }, () => resolve());
+        area.set({ [STORAGE_KEYS.DATA]: data }, () => {
+            if (chrome.runtime.lastError) {
+                console.warn('保存数据失败:', chrome.runtime.lastError.message);
+                // 不 reject，只警告，避免中断后续操作
+            }
+            resolve();
+        });
     });
 }
 
@@ -963,9 +1093,27 @@ function buildWebdavHeaders(config, contentType = 'application/json') {
     return headers;
 }
 
+// WebDAV 请求的通用选项，阻止浏览器弹出原生认证框
+function buildWebdavFetchOptions(cfg, method, additionalHeaders = {}, body = null) {
+    const options = {
+        method,
+        headers: { ...buildWebdavHeaders(cfg, ''), ...additionalHeaders },
+        credentials: 'omit', // 关键：阻止浏览器弹出认证框
+        cache: 'no-store'
+    };
+    if (body !== null) {
+        options.body = body;
+        // 对于有 body 的请求，需要设置正确的 Content-Type
+        if (body instanceof Blob) {
+            options.headers = { ...buildWebdavHeaders(cfg, body.type || 'application/octet-stream'), ...additionalHeaders };
+        }
+    }
+    return options;
+}
+
 async function loadDataFromWebDAV({ localFallback, notifyOnError = false } = {}) {
     const cfg = normalizeWebdavConfig(appSettings.webdav);
-    const fallback = localFallback || JSON.parse(JSON.stringify(DEFAULT_DATA));
+    const fallback = localFallback || deepClone(DEFAULT_DATA);
     if (!cfg.endpoint) {
         handleRemoteError('WebDAV 未填写文件地址，已使用本地数据。', notifyOnError, 'webdav');
         await persistDataToArea(chrome.storage.local, fallback);
@@ -984,6 +1132,7 @@ async function loadDataFromWebDAV({ localFallback, notifyOnError = false } = {})
         const response = await fetchWithTimeout(cfg.endpoint, {
             method: 'GET',
             headers: buildWebdavHeaders(cfg),
+            credentials: 'omit',
             cache: 'no-store'
         }, REMOTE_FETCH_TIMEOUT);
         if (response.status === 404) {
@@ -1002,7 +1151,12 @@ async function loadDataFromWebDAV({ localFallback, notifyOnError = false } = {})
         await persistDataToArea(chrome.storage.local, parsed);
         return parsed;
     } catch (error) {
-        console.warn('加载 WebDAV 数据失败', error);
+        // 网络请求失败是预期情况（离线/超时），降级为 debug 级别
+        if (isNetworkError(error)) {
+            console.debug('[WebDAV] 网络不可用，使用本地数据');
+        } else {
+            console.warn('加载 WebDAV 数据失败', error);
+        }
         handleRemoteError(`读取 WebDAV 失败，已使用本地数据。${error.message}`, notifyOnError, 'webdav');
         await persistDataToArea(chrome.storage.local, fallback);
         return fallback;
@@ -1018,6 +1172,7 @@ async function saveDataToWebDAV(data) {
     const response = await fetchWithTimeout(cfg.endpoint, {
         method: 'PUT',
         headers: buildWebdavHeaders(cfg),
+        credentials: 'omit',
         body: payload
     }, REMOTE_FETCH_TIMEOUT);
     if (!response.ok) {
@@ -1046,7 +1201,7 @@ function buildGistHeaders(token) {
 
 async function loadDataFromGist({ localFallback, notifyOnError = false } = {}) {
     const cfg = normalizeGistConfig(appSettings.gist);
-    const fallback = localFallback || JSON.parse(JSON.stringify(DEFAULT_DATA));
+    const fallback = localFallback || deepClone(DEFAULT_DATA);
     if (!cfg.token) {
         handleRemoteError('未填写 Gist Token，已使用本地数据。', notifyOnError, 'gist');
         await persistDataToArea(chrome.storage.local, fallback);
@@ -1090,7 +1245,12 @@ async function loadDataFromGist({ localFallback, notifyOnError = false } = {}) {
         await persistDataToArea(chrome.storage.local, parsed);
         return parsed;
     } catch (error) {
-        console.warn('加载 Gist 数据失败', error);
+        // 网络请求失败是预期情况（离线/超时），降级为 debug 级别
+        if (isNetworkError(error)) {
+            console.debug('[Gist] 网络不可用，使用本地数据');
+        } else {
+            console.warn('加载 Gist 数据失败', error);
+        }
         handleRemoteError(`读取 Gist 失败，已使用本地数据。${error.message}`, notifyOnError, 'gist');
         await persistDataToArea(chrome.storage.local, fallback);
         return fallback;
@@ -1151,13 +1311,35 @@ async function createGist(token, filename, content) {
     return data.id;
 }
 
+// 判断是否为网络相关错误（离线、超时、连接失败等）
+function isNetworkError(error) {
+    if (!error) return false;
+    const msg = (error.message || '').toLowerCase();
+    return (
+        error.name === 'AbortError' ||
+        error.name === 'TypeError' && msg.includes('fetch') ||
+        msg.includes('network') ||
+        msg.includes('timeout') ||
+        msg.includes('超时') ||
+        msg.includes('failed to fetch') ||
+        msg.includes('net::') ||
+        msg.includes('offline')
+    );
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = REMOTE_FETCH_TIMEOUT) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
+        const response = await fetch(url, { ...options, signal: controller.signal });
         clearTimeout(timer);
+        return response;
+    } catch (error) {
+        clearTimeout(timer);
+        if (error.name === 'AbortError') {
+            throw new Error(`请求超时 (${timeoutMs}ms)`);
+        }
+        throw error;
     }
 }
 
@@ -1191,6 +1373,7 @@ async function testWebdavConnectivity() {
         const response = await fetchWithTimeout(cfg.endpoint, {
             method: 'GET',
             headers: buildWebdavHeaders(cfg),
+            credentials: 'omit',
             cache: 'no-store'
         }, REMOTE_FETCH_TIMEOUT);
         return response.ok || response.status === 404;
@@ -1242,6 +1425,7 @@ async function fetchWebdavSnapshot() {
     const response = await fetchWithTimeout(cfg.endpoint, {
         method: 'GET',
         headers: buildWebdavHeaders(cfg),
+        credentials: 'omit',
         cache: 'no-store'
     }, REMOTE_FETCH_TIMEOUT);
     if (response.status === 404) {
@@ -1400,10 +1584,9 @@ async function cacheIconIfNeeded(src) {
     if (!src || src.startsWith('data:') || isLocalAsset || (iconCache && iconCache[src])) {
         return false;
     }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8秒超时
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8秒超时
-
         const response = await fetch(src, { 
             mode: 'cors', 
             cache: 'force-cache',
@@ -1426,7 +1609,12 @@ async function cacheIconIfNeeded(src) {
             return true;
         }
     } catch (error) {
-        console.warn('缓存图标失败', src, error);
+        // 如果是主动中止则静默处理，否则打印警告
+        if (error.name !== 'AbortError') {
+            console.warn('缓存图标失败', src, error);
+        }
+    } finally {
+        clearTimeout(timeoutId);
     }
     return false;
 }
@@ -1462,36 +1650,44 @@ function purgeUnusedCachedIcons() {
     }
 }
 
+let isWarmingIconCache = false;
 async function warmIconCacheForBookmarks() {
+    if (isWarmingIconCache) return;
     if (!appData || !Array.isArray(appData.categories)) return;
-    const targets = new Set();
-    appData.categories.forEach(cat => {
-        walkCategoryBookmarks(cat, (bm) => {
-            [bm.icon, ...(bm.iconFallbacks || [])].forEach(url => {
-                if (url && !url.startsWith('data:') && !(iconCache && iconCache[url])) {
-                    targets.add(url);
-                }
+    isWarmingIconCache = true;
+    
+    try {
+        const targets = new Set();
+        appData.categories.forEach(cat => {
+            walkCategoryBookmarks(cat, (bm) => {
+                [bm.icon, ...(bm.iconFallbacks || [])].forEach(url => {
+                    if (url && !url.startsWith('data:') && !(iconCache && iconCache[url])) {
+                        targets.add(url);
+                    }
+                });
             });
         });
-    });
-    if (!targets.size) return;
-    
-    // 并发预热，限制并发数以防浏览器限制
-    const urls = Array.from(targets);
-    const BATCH_SIZE = 5;
-    let cachedAny = false;
+        if (!targets.size) return;
+        
+        // 并发预热，限制并发数以防浏览器限制
+        const urls = Array.from(targets);
+        const BATCH_SIZE = 5;
+        let cachedAny = false;
 
-    for (let i = 0; i < urls.length; i += BATCH_SIZE) {
-        const batch = urls.slice(i, i + BATCH_SIZE);
-        const results = await Promise.all(batch.map(url => cacheIconIfNeeded(url)));
-        if (results.some(Boolean)) {
-            cachedAny = true;
+        for (let i = 0; i < urls.length; i += BATCH_SIZE) {
+            const batch = urls.slice(i, i + BATCH_SIZE);
+            const results = await Promise.all(batch.map(url => cacheIconIfNeeded(url)));
+            if (results.some(Boolean)) {
+                cachedAny = true;
+            }
         }
-    }
 
-    if (cachedAny) {
-        renderBookmarks();
-        refreshOpenFolderView();
+        if (cachedAny) {
+            renderBookmarks();
+            refreshOpenFolderView();
+        }
+    } finally {
+        isWarmingIconCache = false;
     }
 }
 
@@ -1939,22 +2135,11 @@ async function openFolderModal(folderBookmark, options = {}) {
     const folderId = typeof folderBookmark === 'string' ? folderBookmark : folderBookmark?.id;
     if (!folderId) return;
     try {
-        let loc = findBookmarkLocation(folderId);
-        // 移除快照回滚逻辑，防止在创建文件夹（合并项目）时因快照滞后导致数据回滚
-        /*
-        const snapshotFolder = await loadFolderFromLocalSnapshot(folderId);
-        if (snapshotFolder) {
-            const currentChildrenCount = Array.isArray(loc?.bookmark?.children) ? loc.bookmark.children.length : -1;
-            const snapshotChildrenCount = Array.isArray(snapshotFolder.bookmark.children) ? snapshotFolder.bookmark.children.length : -1;
-            if (!loc || snapshotChildrenCount > currentChildrenCount) {
-                appData = snapshotFolder.fullData;
-                ensureActiveCategory();
-                normalizeDataStructure();
-                loc = findBookmarkLocation(folderId);
-            }
+        const loc = findBookmarkLocation(folderId);
+        if (!loc || loc.bookmark.type !== 'folder') {
+            console.warn('找不到文件夹或类型不匹配:', folderId);
+            return;
         }
-        */
-        if (!loc || loc.bookmark.type !== 'folder') return;
         const anchorElement = options.anchorElement || findBookmarkCardElement(folderId);
         const anchorRect = options.anchorRect || anchorElement?.getBoundingClientRect() || resolveFolderAnchorRect(folderId);
         rememberFolderAnchor(folderId, anchorElement, anchorRect);
@@ -1966,6 +2151,9 @@ async function openFolderModal(folderBookmark, options = {}) {
         await animateModalVisibility(els.folderModal, { open: true, anchorRect });
     } catch (error) {
         console.error('打开文件夹失败', error);
+        // 确保在出错时清理状态
+        openFolderId = null;
+        openFolderCategoryId = null;
     }
 }
 
@@ -2007,6 +2195,12 @@ function updateFolderModalButton(loc) {
 }
 
 function closeFolderModal() {
+    if (!els.folderModal || els.folderModal.classList.contains('hidden')) {
+        // 已经关闭，直接返回 resolved Promise
+        openFolderId = null;
+        openFolderCategoryId = null;
+        return Promise.resolve();
+    }
     const anchorRect = resolveFolderAnchorRect(openFolderId);
     return animateModalVisibility(els.folderModal, {
         open: false,
@@ -2295,13 +2489,17 @@ function handleGridDrop(event, container) {
 }
 
 function setupBookmarkCardDrag(card, bookmarkId, context = {}) {
+    let longPressTimerId = null;
+    
     const clearLongPress = () => {
-        if (dragState.timerId) {
-            clearTimeout(dragState.timerId);
-            dragState.timerId = null;
+        if (longPressTimerId) {
+            clearTimeout(longPressTimerId);
+            longPressTimerId = null;
         }
         card.classList.remove('drag-ready');
-        card.draggable = false;
+        if (!card.classList.contains('dragging')) {
+            card.draggable = false;
+        }
     };
 
     const startLongPress = (event) => {
@@ -2309,7 +2507,7 @@ function setupBookmarkCardDrag(card, bookmarkId, context = {}) {
             return;
         }
         clearLongPress();
-        dragState.timerId = setTimeout(() => {
+        longPressTimerId = setTimeout(() => {
             card.draggable = true;
             card.classList.add('drag-ready');
         }, DRAG_LONG_PRESS_MS);
@@ -2405,11 +2603,11 @@ function setupBookmarkCardDrag(card, bookmarkId, context = {}) {
             els.folderExitZone.classList.remove('dragover');
         }
         removeDragPlaceholder();
-        clearLongPress();
         
         // 清理可能被移到 body 的拖拽元素
         if (card.parentNode === document.body) {
-            document.body.removeChild(card);
+            // 不直接移除，让下一次渲染自然清理
+            card.style.display = 'none';
         }
     });
 
@@ -3299,6 +3497,7 @@ function selectAutoIcon(identifier) {
     renderAutoIconCandidates();
 }
 
+let autoIconLoadId = 0;
 async function loadAutoIconsForUrl(inputUrl, { desiredSrc = null, force = false } = {}) {
     const normalizedUrl = normalizeUrlInput(inputUrl);
     if (!normalizedUrl) {
@@ -3314,6 +3513,8 @@ async function loadAutoIconsForUrl(inputUrl, { desiredSrc = null, force = false 
         }
         return;
     }
+    
+    const currentLoadId = ++autoIconLoadId;
     lastAutoIconUrl = normalizedUrl;
     isFetchingAutoIcons = true;
     ensureAutoIconContainersVisible();
@@ -3321,6 +3522,12 @@ async function loadAutoIconsForUrl(inputUrl, { desiredSrc = null, force = false 
     try {
         const urlObj = new URL(normalizedUrl);
         const candidates = await fetchIconCandidates(urlObj);
+        
+        // 检查是否有更新的请求覆盖了当前请求
+        if (currentLoadId !== autoIconLoadId) {
+            return; // 这个请求已过时
+        }
+        
         if (!candidates.length) {
             autoIconCandidates = [];
             selectedAutoIcon = null;
@@ -3336,13 +3543,19 @@ async function loadAutoIconsForUrl(inputUrl, { desiredSrc = null, force = false 
             selectAutoIcon(0);
         }
     } catch (error) {
+        // 检查是否有更新的请求覆盖了当前请求
+        if (currentLoadId !== autoIconLoadId) {
+            return;
+        }
         console.error('获取图标失败', error);
         autoIconCandidates = [];
         selectedAutoIcon = null;
         setIconPreviewSource('');
         setAutoIconStatus('获取图标失败，请稍后重试或改用自定义图片。');
     } finally {
-        isFetchingAutoIcons = false;
+        if (currentLoadId === autoIconLoadId) {
+            isFetchingAutoIcons = false;
+        }
     }
 }
 
@@ -3500,7 +3713,12 @@ async function handleStorageModeChange(mode) {
 }
 
 async function switchStorageMode(targetMode) {
-    const snapshot = attachBackgroundToData(JSON.parse(JSON.stringify(appData)));
+    const snapshot = attachBackgroundToData(deepClone(appData));
+    
+    // 清空背景缓存和运行时状态，避免切换模式后出现闪烁
+    clearCloudBackgroundRuntime();
+    await clearAllCachedBackgrounds();
+    
     appSettings.storageMode = targetMode;
     saveSettings();
     await persistAppData(snapshot, { mode: targetMode, notifyOnError: true });
@@ -3612,7 +3830,7 @@ function normalizeNativeBookmark(bm) {
 }
 
 function mergeImportedData(current, incoming) {
-    const base = current && Array.isArray(current.categories) ? JSON.parse(JSON.stringify(current)) : { categories: [], activeCategory: null };
+    const base = current && Array.isArray(current.categories) ? deepClone(current) : { categories: [], activeCategory: null };
     const result = base;
     result.categories = Array.isArray(result.categories) ? result.categories : [];
 
@@ -3981,7 +4199,11 @@ function buildBackgroundDisplayUrl(background) {
 
 function clearCloudBackgroundRuntime() {
     if (cloudBackgroundRuntime.isObjectUrl && cloudBackgroundRuntime.url) {
-        URL.revokeObjectURL(cloudBackgroundRuntime.url);
+        try {
+            URL.revokeObjectURL(cloudBackgroundRuntime.url);
+        } catch (e) {
+            // 忽略撤销失败的错误
+        }
     }
     cloudBackgroundRuntime = {
         url: '',
@@ -4025,32 +4247,68 @@ function openBackgroundDB() {
 }
 
 async function getCachedBackground(url) {
+    let db = null;
     try {
-        const db = await openBackgroundDB();
+        db = await openBackgroundDB();
         return new Promise((resolve, reject) => {
             const transaction = db.transaction([BG_STORE_NAME], 'readonly');
             const store = transaction.objectStore(BG_STORE_NAME);
             const request = store.get(url);
-            request.onsuccess = () => resolve(request.result);
+            request.onsuccess = () => {
+                resolve(request.result);
+            };
             request.onerror = () => reject(request.error);
+            transaction.oncomplete = () => {
+                if (db) db.close();
+            };
         });
     } catch (e) {
+        if (db) db.close();
         return null;
     }
 }
 
 async function setCachedBackground(data) {
+    let db = null;
     try {
-        const db = await openBackgroundDB();
+        db = await openBackgroundDB();
         return new Promise((resolve, reject) => {
             const transaction = db.transaction([BG_STORE_NAME], 'readwrite');
             const store = transaction.objectStore(BG_STORE_NAME);
             const request = store.put(data);
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
+            transaction.oncomplete = () => {
+                if (db) db.close();
+            };
         });
     } catch (e) {
+        if (db) db.close();
         console.warn('IndexedDB write error', e);
+    }
+}
+
+// 清空 IndexedDB 中的所有背景缓存
+async function clearAllCachedBackgrounds() {
+    let db = null;
+    try {
+        db = await openBackgroundDB();
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([BG_STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(BG_STORE_NAME);
+            const request = store.clear();
+            request.onsuccess = () => {
+                console.log('Background cache cleared');
+                resolve();
+            };
+            request.onerror = () => reject(request.error);
+            transaction.oncomplete = () => {
+                if (db) db.close();
+            };
+        });
+    } catch (e) {
+        if (db) db.close();
+        console.warn('Failed to clear background cache', e);
     }
 }
 
@@ -4067,6 +4325,7 @@ async function checkAndRefreshBackgroundCache(displayUrl, storageMode, normalize
             resp = await fetchWithTimeout(displayUrl, {
                 method: 'GET',
                 headers: { ...buildWebdavHeaders(cfg, ''), ...cacheHeaders },
+                credentials: 'omit',
                 cache: 'no-store'
             }, REMOTE_FETCH_TIMEOUT);
         } else if (storageMode === STORAGE_MODES.GIST) {
@@ -4104,7 +4363,8 @@ async function checkAndRefreshBackgroundCache(displayUrl, storageMode, normalize
     }
 }
 
-async function resolveBackgroundImageUrl(background) {
+async function resolveBackgroundImageUrl(background, options = {}) {
+    const { allowBlocking = false } = options; // 是否允许阻塞等待远程下载
     const normalized = normalizeBackgroundSettings(background);
     const displayUrl = buildBackgroundDisplayUrl(normalized);
 
@@ -4139,29 +4399,111 @@ async function resolveBackgroundImageUrl(background) {
         if (cachedData && cachedData.blob) {
             resolvedUrl = URL.createObjectURL(cachedData.blob);
             isObjectUrl = true;
-            // 后台检查更新
+            updateCloudBackgroundRuntime(resolvedUrl, versionToken, isObjectUrl);
+            // 后台检查更新（不阻塞）
             checkAndRefreshBackgroundCache(displayUrl, storageMode, normalized, cachedData);
+            return { url: resolvedUrl, isObjectUrl, version: versionToken };
         }
     }
 
-    // 如果没有缓存，则执行下载
-    if (!resolvedUrl) {
-        try {
-            if (storageMode === STORAGE_MODES.WEBDAV) {
-                const cfg = normalizeWebdavConfig(appSettings.webdav);
-                // 防止配置不完整导致浏览器原生弹窗
-                if (!cfg.username && !cfg.password) {
-                    return { url: '', isObjectUrl: false, version: '' };
-                }
-                const resp = await fetchWithTimeout(displayUrl, {
-                    method: 'GET',
-                    headers: { ...buildWebdavHeaders(cfg, ''), ...cacheHeaders },
-                    cache: 'no-store'
-                }, REMOTE_FETCH_TIMEOUT);
-                if (resp.status === 304 && cloudBackgroundRuntime.url) {
-                    return { ...cloudBackgroundRuntime };
-                }
-                if (resp.ok) {
+    // 没有缓存时的处理
+    if (!allowBlocking) {
+        // 初始加载时不阻塞，直接返回空，让后台刷新
+        // 触发后台下载
+        downloadAndCacheBackgroundInBackground(displayUrl, storageMode, normalized, versionToken);
+        return { url: '', isObjectUrl: false, version: '' };
+    }
+
+    // 允许阻塞时（如用户手动刷新），执行下载
+    const result = await downloadBackgroundFromRemote(displayUrl, storageMode, cacheHeaders, versionToken);
+    return result;
+}
+
+// 后台下载并缓存背景图，完成后自动应用
+async function downloadAndCacheBackgroundInBackground(displayUrl, storageMode, normalized, versionToken) {
+    try {
+        const cacheHeaders = buildBackgroundConditionalHeaders(normalized.cloud);
+        const result = await downloadBackgroundFromRemote(displayUrl, storageMode, cacheHeaders, versionToken);
+        if (result.url) {
+            // 下载完成，直接应用背景（此时 cloudBackgroundRuntime 已更新，不会再次下载）
+            applyBackgroundDirectly(result.url, normalized.opacity);
+        }
+    } catch (error) {
+        // 网络错误是预期的，静默处理
+        if (!isNetworkError(error)) {
+            console.warn('后台下载背景图失败', error);
+        }
+    }
+}
+
+// 直接应用背景图 URL，不触发远程下载
+function applyBackgroundDirectly(imageUrl, opacity) {
+    const root = document.documentElement;
+    if (!imageUrl) return;
+    
+    if (root) {
+        root.style.setProperty('--custom-bg-opacity', opacity);
+    }
+    
+    // 预加载图片
+    const img = new Image();
+    img.onload = () => {
+        if (root) root.style.setProperty('--custom-bg-image', `url(${imageUrl})`);
+        if (document.body) document.body.classList.add('custom-bg-enabled');
+    };
+    img.onerror = () => {
+        console.warn('背景图加载失败');
+    };
+    img.src = imageUrl;
+}
+
+// 从远程下载背景图
+async function downloadBackgroundFromRemote(displayUrl, storageMode, cacheHeaders, versionToken) {
+    let resolvedUrl = '';
+    let isObjectUrl = false;
+
+    try {
+        if (storageMode === STORAGE_MODES.WEBDAV) {
+            const cfg = normalizeWebdavConfig(appSettings.webdav);
+            // 防止配置不完整导致浏览器原生弹窗
+            if (!cfg.username && !cfg.password) {
+                return { url: '', isObjectUrl: false, version: '' };
+            }
+            const resp = await fetchWithTimeout(displayUrl, {
+                method: 'GET',
+                headers: { ...buildWebdavHeaders(cfg, ''), ...cacheHeaders },
+                credentials: 'omit',
+                cache: 'no-store'
+            }, REMOTE_FETCH_TIMEOUT);
+            if (resp.status === 304 && cloudBackgroundRuntime.url) {
+                return { ...cloudBackgroundRuntime };
+            }
+            if (resp.ok) {
+                const blob = await resp.blob();
+                resolvedUrl = URL.createObjectURL(blob);
+                isObjectUrl = true;
+                // 保存到缓存
+                setCachedBackground({
+                    url: displayUrl,
+                    blob: blob,
+                    etag: resp.headers.get('etag'),
+                    lastModified: resp.headers.get('last-modified'),
+                    timestamp: Date.now()
+                });
+            }
+        } else if (storageMode === STORAGE_MODES.GIST) {
+            const cfg = normalizeGistConfig(appSettings.gist);
+            const resp = await fetchWithTimeout(displayUrl, {
+                method: 'GET',
+                headers: { ...buildGistHeaders(cfg.token), ...cacheHeaders },
+                cache: 'no-store'
+            }, REMOTE_FETCH_TIMEOUT);
+            if (resp.status === 304 && cloudBackgroundRuntime.url) {
+                return { ...cloudBackgroundRuntime };
+            }
+            if (resp.ok) {
+                const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+                if (contentType.startsWith('image/')) {
                     const blob = await resp.blob();
                     resolvedUrl = URL.createObjectURL(blob);
                     isObjectUrl = true;
@@ -4173,42 +4515,36 @@ async function resolveBackgroundImageUrl(background) {
                         lastModified: resp.headers.get('last-modified'),
                         timestamp: Date.now()
                     });
-                }
-            } else if (storageMode === STORAGE_MODES.GIST) {
-                const cfg = normalizeGistConfig(appSettings.gist);
-                const resp = await fetchWithTimeout(displayUrl, {
-                    method: 'GET',
-                    headers: { ...buildGistHeaders(cfg.token), ...cacheHeaders },
-                    cache: 'no-store'
-                }, REMOTE_FETCH_TIMEOUT);
-                if (resp.status === 304 && cloudBackgroundRuntime.url) {
-                    return { ...cloudBackgroundRuntime };
-                }
-                if (resp.ok) {
-                    const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-                    if (contentType.startsWith('image/')) {
-                        const blob = await resp.blob();
-                        resolvedUrl = URL.createObjectURL(blob);
-                        isObjectUrl = true;
-                        // 保存到缓存
-                        setCachedBackground({
-                            url: displayUrl,
-                            blob: blob,
-                            etag: resp.headers.get('etag'),
-                            lastModified: resp.headers.get('last-modified'),
-                            timestamp: Date.now()
-                        });
-                    } else {
-                        const text = await resp.text();
-                        const trimmed = text.trim();
-                        if (trimmed.startsWith('data:image')) {
+                } else {
+                    // Gist 返回的是文本（Base64 DataURL）
+                    const text = await resp.text();
+                    const trimmed = text.trim();
+                    if (trimmed.startsWith('data:image')) {
+                        // 将 Base64 DataURL 转换为 Blob URL 以避免 CSS url() 长度限制
+                        const blob = dataUrlToBlob(trimmed);
+                        if (blob) {
+                            resolvedUrl = URL.createObjectURL(blob);
+                            isObjectUrl = true;
+                            // 保存 Blob 到缓存，后续加载无需重复下载和解码
+                            setCachedBackground({
+                                url: displayUrl,
+                                blob: blob,
+                                etag: resp.headers.get('etag'),
+                                lastModified: resp.headers.get('last-modified'),
+                                timestamp: Date.now()
+                            });
+                        } else {
+                            // Blob 转换失败，降级使用 DataURL（小图片可能可用）
                             resolvedUrl = trimmed;
                         }
                     }
                 }
             }
-        } catch (error) {
-            console.warn('读取云端背景失败，使用原始地址', error);
+        }
+    } catch (error) {
+        // 网络错误静默处理，不影响用户体验
+        if (!isNetworkError(error)) {
+            console.warn('读取云端背景失败', error);
         }
     }
 
@@ -4217,7 +4553,7 @@ async function resolveBackgroundImageUrl(background) {
         if (cloudBackgroundRuntime.url && cloudBackgroundRuntime.version === versionToken) {
             return { ...cloudBackgroundRuntime };
         }
-        resolvedUrl = displayUrl;
+        return { url: '', isObjectUrl: false, version: '' };
     }
 
     updateCloudBackgroundRuntime(resolvedUrl, versionToken, isObjectUrl);
@@ -4248,14 +4584,21 @@ function buildBackgroundRemoteName(uploadName, mimeType) {
     return `background.${cleanExt}`;
 }
 
-async function applyBackgroundFromSettings() {
+async function applyBackgroundFromSettings(options = {}) {
+    const { allowBlocking = false } = options;
     const normalizedBg = normalizeBackgroundSettings(appSettings.background);
     appSettings.background = normalizedBg;
     const opacity = normalizedBg.opacity;
-    const { url: actualImageUrl } = await resolveBackgroundImageUrl(normalizedBg);
+    const { url: actualImageUrl } = await resolveBackgroundImageUrl(normalizedBg, { allowBlocking });
     const hasImage = !!actualImageUrl;
     
     const root = document.documentElement;
+    
+    // 如果没有图片且不阻塞模式，保持现有背景不变（等待后台加载）
+    if (!hasImage && !allowBlocking && normalizedBg.mode === 'cloud') {
+        // 云端模式下没有缓存，后台会下载并自动应用，这里先不清除已有背景
+        return;
+    }
     
     // 如果没有图片，直接清除并返回
     if (!hasImage) {
@@ -4338,7 +4681,7 @@ function maybeSyncBackgroundFromData(data, { saveSettingsFlag = false } = {}) {
         }
     });
     appSettings.background = merged;
-    applyBackgroundFromSettings();
+    applyBackgroundFromSettings({ allowBlocking: true });
     if (saveSettingsFlag) {
         saveSettings();
     }
@@ -4414,6 +4757,7 @@ async function fetchWebdavBackgroundFile(preferredName, { metadataOnly = false, 
             const resp = await fetchWithTimeout(remoteUrl, {
                 method: metadataOnly ? 'HEAD' : 'GET',
                 headers,
+                credentials: 'omit',
                 cache: 'no-store'
             }, REMOTE_FETCH_TIMEOUT);
             if (resp.status === 304) {
@@ -4430,6 +4774,7 @@ async function fetchWebdavBackgroundFile(preferredName, { metadataOnly = false, 
                     const rangeResp = await fetchWithTimeout(remoteUrl, {
                         method: 'GET',
                         headers: { ...headers, Range: 'bytes=0-0' },
+                        credentials: 'omit',
                         cache: 'no-store'
                     }, REMOTE_FETCH_TIMEOUT);
                     if (!rangeResp.ok) continue;
@@ -4480,6 +4825,7 @@ async function uploadWebdavBackground(imageDataUrl, uploadName, mimeType) {
     const response = await fetchWithTimeout(remoteUrl, {
         method: 'PUT',
         headers: buildWebdavHeaders(cfg, blob.type || 'application/octet-stream'),
+        credentials: 'omit',
         body: blob
     }, REMOTE_FETCH_TIMEOUT);
     if (!response.ok) {
@@ -4588,6 +4934,7 @@ async function cleanupOldCloudBackgroundFiles(newFileName, previousFileName, sto
                 await fetchWithTimeout(remoteUrl, {
                     method: 'DELETE',
                     headers: buildWebdavHeaders(cfg, ''),
+                    credentials: 'omit',
                     cache: 'no-store'
                 }, REMOTE_FETCH_TIMEOUT);
             } catch (error) {
@@ -4702,12 +5049,17 @@ async function refreshCloudBackgroundFromRemote({ notifyWhenMissing = false } = 
                 image: '' // 云端模式只使用远端 URL，避免大图写入本地存储
             });
             saveSettings();
-            applyBackgroundFromSettings();
+            applyBackgroundFromSettings({ allowBlocking: true });
         }
         updateBackgroundControlsUI();
         return true;
     } catch (error) {
-        console.warn('刷新云端背景失败', error);
+        // 网络请求失败是预期情况，降级为 debug
+        if (isNetworkError(error)) {
+            console.debug('[背景] 网络不可用，跳过云端刷新');
+        } else {
+            console.warn('刷新云端背景失败', error);
+        }
         if (notifyWhenMissing) {
             alert(`云端背景读取失败：${error.message}`);
         }
@@ -4961,7 +5313,7 @@ function handleBackgroundOpacityInput(event) {
         opacity
     });
     saveSettings();
-    applyBackgroundFromSettings();
+    applyBackgroundFromSettings({ allowBlocking: true });
     updateBackgroundControlsUI();
 }
 
@@ -4985,76 +5337,52 @@ async function handleBackgroundImageChange(event) {
     
     // 根据存储模式设置不同的大小限制
     // 浏览器本地存储：2MB（压缩后约2.66MB，考虑其他设置数据）
-    // WebDAV：无限制（WebDAV支持二进制，服务器自行控制大小）
-    // Gist：4MB（Base64 文本有体积膨胀，控制在安全上限内）
+    // 大小限制策略：
+    // - 本地：无限制
+    // - WebDAV：无限制（服务器自行控制）
+    // - Gist：50MB（Base64 膨胀后约 67MB，Gist 可处理但建议压缩大图）
     const isGist = storageMode === STORAGE_MODES.GIST;
     const isWebDAV = storageMode === STORAGE_MODES.WEBDAV;
-    const MAX_SIZE = isGist ? 4 * 1024 * 1024 : (isWebDAV ? Infinity : (isRemote ? Infinity : 2 * 1024 * 1024));
-    const MAX_COMPRESSED_SIZE = isGist ? 4 * 1024 * 1024 : (isWebDAV ? Infinity : (isRemote ? Infinity : 3 * 1024 * 1024));
-    const MAX_RESOLUTION = isRemote ? 3840 : 1920; // 4K 分辨率支持（3840x2160）
+    const GIST_HARD_LIMIT = 50 * 1024 * 1024; // 50MB 硬限制
+    const GIST_COMPRESS_THRESHOLD = 10 * 1024 * 1024; // 超过 10MB 建议压缩
+    const MAX_RESOLUTION = 3840; // 4K 分辨率
     
     const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-    const limitMB = Number.isFinite(MAX_SIZE) ? (MAX_SIZE / 1024 / 1024).toFixed(0) : '∞';
     
-    if (file.size > MAX_SIZE) {
-        let storageTip;
-        if (isGist) {
-            storageTip = `当前使用 Gist 存储（图片将转为Base64文本，体积增加约33%）\n⚠️ 大图片会导致同步和加载缓慢，建议使用图床+URL模式`;
-        } else if (isWebDAV) {
-            // WebDAV 无大小限制，不会进入此分支
-            storageTip = `当前使用 WebDAV 存储`;
-        } else if (isRemote) {
-            storageTip = `当前使用云端存储`;
-        } else {
-            storageTip = '建议使用 WebDAV 存储以支持更大的图片（无大小限制）';
-        }
-        
-        if (!confirm(`图片文件较大（${sizeMB}MB > ${limitMB}MB）\n${storageTip}\n\n是否尝试压缩到 ${MAX_RESOLUTION}px 并使用？`)) {
-            event.target.value = '';
-            return;
-        }
+    // Gist 模式：超过 50MB 直接拒绝
+    if (isGist && file.size > GIST_HARD_LIMIT) {
+        alert(`图片过大（${sizeMB}MB），超过 Gist 支持的上限（50MB）\n\n推荐方案：\n1. 使用图床服务（如 imgur.com）并用"图片链接"模式\n2. 切换到 WebDAV 存储（无大小限制）`);
+        event.target.value = '';
+        return;
     }
     
     try {
         let imageDataUrl;
         
-        // 如果图片较大，尝试压缩
-        if (isGist) {
-            // Gist 模式：统一压缩/转码，确保请求体不会超限
-            imageDataUrl = await encodeImageForGist(file);
-        } else if (file.size > MAX_SIZE) {
-            // WebDAV无限制，不压缩；其他远端/本地按需压缩
-            const targetSizeMB = isWebDAV ? Infinity : (isRemote ? 8 : 1.5);
-            imageDataUrl = await compressImage(file, { 
-                maxSizeMB: targetSizeMB, 
-                maxWidthOrHeight: MAX_RESOLUTION 
-            });
+        // Gist 模式：超过 10MB 询问是否压缩
+        if (isGist && file.size > GIST_COMPRESS_THRESHOLD) {
+            const choice = await showGistCompressionChoice(sizeMB);
+            if (choice === 'cancel') {
+                event.target.value = '';
+                return;
+            }
+            if (choice === 'compress') {
+                imageDataUrl = await encodeImageForGist(file);
+            } else {
+                // 原图上传
+                imageDataUrl = await blobToDataURL(file);
+            }
+        } else if (isGist) {
+            // Gist 小图片直接转 DataURL
+            imageDataUrl = await blobToDataURL(file);
         } else {
+            // 本地/WebDAV：直接读取，无大小限制
             imageDataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (e) => resolve(e.target.result);
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
-        }
-        
-        // 检查压缩后的大小（Base64编码后的实际大小）
-        const estimatedSize = imageDataUrl.length;
-        if (estimatedSize > MAX_COMPRESSED_SIZE) {
-            let suggestion;
-            if (isGist) {
-                suggestion = '💡 Gist不适合存储大图片（Base64编码导致体积膨胀）\n推荐方案：\n1. 使用图床服务（如 imgur.com）并用"图片链接"模式\n2. 切换到 WebDAV 存储（支持二进制，更高效，无大小限制）';
-            } else if (isWebDAV) {
-                // WebDAV 无限制，不会进入此分支
-                suggestion = '如需更大的图片，建议使用"图片链接"模式';
-            } else if (isRemote) {
-                suggestion = '请使用"图片链接"模式引用外部图床';
-            } else {
-                suggestion = '请切换到 WebDAV 存储（无大小限制），或使用"图片链接"模式';
-            }
-            alert(`图片压缩后仍然过大（${(estimatedSize / 1024 / 1024).toFixed(2)}MB）\n\n${suggestion}`);
-            event.target.value = '';
-            return;
         }
 
         if (isCloudMode) {
@@ -5084,7 +5412,7 @@ async function handleBackgroundImageChange(event) {
                     return;
                 }
                 await cleanupOldCloudBackgroundFiles(uploadResult?.fileName || uploadName, prevCloudFile, storageMode);
-                applyBackgroundFromSettings();
+                applyBackgroundFromSettings({ allowBlocking: true });
                 updateBackgroundControlsUI();
                 persistBackgroundChange();
                 alert('云端背景已上传并生效。');
@@ -5113,7 +5441,7 @@ async function handleBackgroundImageChange(event) {
             return;
         }
         
-        applyBackgroundFromSettings();
+        applyBackgroundFromSettings({ allowBlocking: true });
         updateBackgroundControlsUI();
         persistBackgroundChange();
     } catch (error) {
@@ -5173,9 +5501,26 @@ async function compressImage(file, options = {}) {
 }
 
 // --- Gist 专用图片压缩/编码（PNG/JPG 统一走 JPEG 压缩，确保大小可控） ---
-const GIST_IMAGE_MAX_BYTES = 4096 * 1024; // 约 4MB 上限，避免请求体过大
-const GIST_IMAGE_MAX_WIDTH = 3840; // 与 4K 接近的宽度上限，等比缩放
-const GIST_JPEG_INITIAL_QUALITY = 0.8;
+// Gist 存储图片为 Base64 文本，体积膨胀约 33%，实际可存储较大图片
+// 限制 10MB 原始大小（对应约 13MB Base64），平衡质量与同步效率
+const GIST_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10MB 上限
+const GIST_IMAGE_MAX_WIDTH = 3840; // 4K 分辨率上限
+const GIST_JPEG_INITIAL_QUALITY = 0.85;
+
+// Gist 大图片压缩选择对话框
+function showGistCompressionChoice(sizeMB) {
+    return new Promise((resolve) => {
+        const message = `图片较大（${sizeMB}MB），上传到 Gist 可能需要较长时间。\n\n请选择：\n• 点击「确定」压缩后上传（压缩至 10MB 内，推荐）\n• 点击「取消」后选择是否上传原图`;
+        
+        if (confirm(message)) {
+            resolve('compress');
+        } else {
+            // 二次确认是否上传原图
+            const uploadOriginal = confirm(`是否直接上传原图（${sizeMB}MB）？\n\n⚠️ 大文件同步较慢，首次加载可能需要等待\n\n点击「确定」上传原图\n点击「取消」放弃上传`);
+            resolve(uploadOriginal ? 'original' : 'cancel');
+        }
+    });
+}
 
 function estimateBytesFromDataUrl(dataUrl = '') {
     if (!dataUrl) return 0;
@@ -5297,7 +5642,7 @@ function handleBackgroundUrlChange() {
         image: url
     });
     saveSettings();
-    applyBackgroundFromSettings();
+    applyBackgroundFromSettings({ allowBlocking: true });
     updateBackgroundControlsUI();
 }
 
@@ -5321,7 +5666,7 @@ function clearBackgroundImage() {
         els.backgroundUrlInput.value = '';
     }
     saveSettings();
-    applyBackgroundFromSettings();
+    applyBackgroundFromSettings({ allowBlocking: true });
     updateBackgroundControlsUI();
     persistBackgroundChange();
 }
@@ -5480,7 +5825,7 @@ function syncSettingsFromUI() {
     if (appData && typeof appData === 'object') {
         appData.uiOpacity = appSettings.uiOpacity;
     }
-    applyBackgroundFromSettings();
+    applyBackgroundFromSettings({ allowBlocking: true });
     updateBackgroundControlsUI();
 }
 
@@ -5541,7 +5886,7 @@ async function applyStorageConfig() {
                 image: ''
             });
             saveSettings();
-            applyBackgroundFromSettings();
+            applyBackgroundFromSettings({ allowBlocking: true });
             updateBackgroundControlsUI();
             refreshCloudBackgroundFromRemote({ notifyWhenMissing: false });
         }
@@ -6033,26 +6378,26 @@ function setupDragNavigation() {
     // 2. 拖拽到文件夹外部区域（遮罩层）关闭文件夹
     if (els.folderModal) {
         els.folderModal.addEventListener('dragover', (e) => {
-             if (!dragState.draggingId) return;
-             e.preventDefault();
-             if (e.target === els.folderModal) {
-                 scheduleNavigation(() => {
-                     closeFolderModal();
-                     // 文件夹关闭后，立即将占位符移动到主网格
-                     if (els.bookmarkGrid) {
-                         positionPlaceholderAtEnd(els.bookmarkGrid);
-                     }
-                 });
-             } else {
-                 if (e.target.closest('.modal-content')) {
+            if (!dragState.draggingId) return;
+            e.preventDefault();
+            if (e.target === els.folderModal) {
+                scheduleNavigation(() => {
+                    closeFolderModal();
+                    // 文件夹关闭后，立即将占位符移动到主网格
+                    if (els.bookmarkGrid) {
+                        positionPlaceholderAtEnd(els.bookmarkGrid);
+                    }
+                });
+            } else {
+                if (e.target.closest('.modal-content')) {
                     cancelNavigation();
-                 }
-             }
+                }
+            }
         });
         els.folderModal.addEventListener('dragleave', (e) => {
-             if (e.target === els.folderModal) {
-                 cancelNavigation();
-             }
+            if (e.target === els.folderModal) {
+                cancelNavigation();
+            }
         });
     }
 }

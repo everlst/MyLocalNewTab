@@ -155,13 +155,20 @@ body::before {
     background-position: center;
     background-repeat: no-repeat;
     opacity: 0;
-    transition: opacity 0.6s ease-in-out;
+    transition: opacity 0.4s ease-out;
     pointer-events: none;
     z-index: -1;
 }
 
-body.custom-bg-enabled::before {
+/* 背景图淡入 - 与容器同步 */
+body.bg-ready.custom-bg-enabled::before {
     opacity: var(--custom-bg-opacity, 0.7);
+}
+
+/* 兼容：非 bg-ready 模式下（如后台更新背景时）也显示背景 */
+body.custom-bg-enabled:not(.bg-ready)::before {
+    opacity: var(--custom-bg-opacity, 0.7);
+    transition: opacity 0.3s ease-out;
 }
 
 .container {
@@ -207,7 +214,7 @@ header {
     max-width: 1000px;
     box-shadow: var(--shadow);
     border-radius: 24px;
-    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    transition: box-shadow 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     background: var(--card-bg);
 }
 
@@ -230,7 +237,7 @@ header {
     text-align: center;
     text-align-last: center;
     width: 80px;
-    transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+    transition: background-color 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .search-engine-select:hover {
@@ -276,7 +283,7 @@ header {
     z-index: 1200;
     padding: 0;
     opacity: var(--ui-opacity, 1);
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    transition: background-color 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .settings-fab:hover {
@@ -322,7 +329,7 @@ main {
     cursor: pointer;
     border-radius: var(--radius);
     margin-bottom: 5px;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease, transform 0.2s ease, color 0.2s ease;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -366,7 +373,7 @@ main {
     font-size: 12px;
     color: var(--text-secondary);
     padding: 2px 6px;
-    transition: all 0.2s;
+    transition: opacity 0.2s ease, color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 .sidebar li:hover .delete-cat {
     opacity: 1;
@@ -387,7 +394,7 @@ main {
     cursor: pointer;
     color: var(--text-secondary);
     margin-top: 10px;
-    transition: all 0.2s;
+    transition: border-color 0.2s ease, color 0.2s ease, background-color 0.2s ease;
 }
 
 .icon-btn:hover {
@@ -424,8 +431,8 @@ main {
     text-align: center;
     box-shadow: var(--shadow);
     cursor: pointer;
-    transition: all 0.4s cubic-bezier(0.2, 0, 0.2, 1);
-    will-change: transform;
+    transition: transform 0.25s cubic-bezier(0.2, 0, 0.2, 1), box-shadow 0.25s ease;
+    will-change: transform, box-shadow;
     height: 120px;
     position: relative;
     text-decoration: none;
@@ -528,7 +535,7 @@ main {
     background: var(--muted-bg);
     box-shadow: none;
     color: var(--text-secondary);
-    transition: all 0.2s;
+    transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
     height: auto;
     min-height: 120px;
 }
@@ -604,7 +611,7 @@ main {
     font-size: 12px;
     color: var(--text-secondary);
     box-shadow: 0 2px 5px rgba(0,0,0,0.15);
-    transition: all 0.2s;
+    transition: color 0.2s ease, transform 0.2s ease;
 }
 
 .action-btn:hover {
@@ -632,7 +639,7 @@ main {
     visibility: hidden;
     transition: none;
     backdrop-filter: blur(6px);
-    will-change: opacity;
+    will-change: opacity, visibility;
 }
 
 .modal:not(.hidden) {
@@ -774,6 +781,7 @@ main {
     border: none;
     cursor: pointer;
     font-size: 14px;
+    transition: background-color 0.15s ease, transform 0.1s ease;
 }
 
 .btn-primary {
@@ -1286,7 +1294,7 @@ main {
     cursor: pointer;
     padding: 4px 12px;
     border-radius: 6px;
-    transition: all 0.2s;
+    transition: background-color 0.2s ease, color 0.2s ease;
     display: inline-flex;
     align-items: center;
 }
@@ -1407,7 +1415,7 @@ body.modal-open #bookmarkGrid .bookmark-card {
     cursor: pointer;
     font-size: 13px;
     color: var(--text-secondary);
-    transition: all 0.2s;
+    transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .bg-mode-tab.active {

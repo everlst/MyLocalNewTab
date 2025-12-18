@@ -49,9 +49,9 @@ const STORAGE_MODES = {
 };
 
 const STORAGE_KEYS = {
-    DATA: 'edgeTabData',
-    SETTINGS: 'edgeTabSettings',
-    BACKGROUND_IMAGE: 'edgeTabBgImage'
+    DATA: 'MyLocalNewTabData',
+    SETTINGS: 'MyLocalNewTabSettings',
+    BACKGROUND_IMAGE: 'MyLocalNewTabBgImage'
 };
 
 const DEFAULT_BACKGROUND = {
@@ -89,7 +89,7 @@ const DEFAULT_REMOTE_FILENAME = 'MyLocalNewTab-data.json';
 const REMOTE_FETCH_TIMEOUT = 12000;
 
 const IMPORT_SOURCES = {
-    EDGE_TAB: 'edgeTab',
+    EDGE_TAB: 'MyLocalNewTab',
     WETAB: 'wetab'
 };
 
@@ -99,7 +99,7 @@ const IMPORT_MODES = {
 };
 
 const CACHE_KEYS = {
-    ICONS: 'edgeTabIconCache'
+    ICONS: 'MyLocalNewTabIconCache'
 };
 
 const MAX_CACHED_ICON_BYTES = 500 * 1024;
@@ -1294,7 +1294,7 @@ async function createGist(token, filename, content) {
         method: 'POST',
         headers: buildGistHeaders(token),
         body: JSON.stringify({
-            description: 'EdgeTab 数据同步',
+            description: 'MyLocalNewTab 数据同步',
             public: false,
             files: {
                 [filename]: { content }
@@ -3726,7 +3726,7 @@ function exportDataAsFile() {
     const a = document.createElement('a');
     const dateStr = new Date().toISOString().split('T')[0];
     a.href = url;
-    a.download = `edgeTab-data-${dateStr}.json`;
+    a.download = `MyLocalNewTab-data-${dateStr}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -3768,10 +3768,10 @@ function parseImportedData(raw, source) {
     if (source === IMPORT_SOURCES.WETAB) {
         return parseWeTabData(raw);
     }
-    return parseEdgeTabData(raw);
+    return parseMyLocalNewTabData(raw);
 }
 
-function parseEdgeTabData(raw) {
+function parseMyLocalNewTabData(raw) {
     if (!raw || !Array.isArray(raw.categories)) return null;
     const categories = raw.categories.map((cat, index) => {
         if (!cat) return null;
@@ -3797,6 +3797,21 @@ function parseEdgeTabData(raw) {
 
 function normalizeNativeBookmark(bm) {
     if (!bm) return null;
+    
+    // 处理文件夹类型
+    if (bm.type === 'folder') {
+        const folder = {
+            id: bm.id || generateId('bm'),
+            title: bm.title || bm.name || '未命名文件夹',
+            type: 'folder',
+            children: Array.isArray(bm.children)
+                ? bm.children.map(normalizeNativeBookmark).filter(Boolean)
+                : []
+        };
+        return folder;
+    }
+    
+    // 处理普通链接书签
     const url = normalizeUrlInput(bm.url || bm.target);
     if (!url) return null;
     const meta = generateHighResIconMeta(url);
@@ -4219,7 +4234,7 @@ function updateCloudBackgroundRuntime(url, version, isObjectUrl = false) {
 }
 
 // --- IndexedDB Cache for Background Images ---
-const DB_NAME = 'EdgeTabDB';
+const DB_NAME = 'MyLocalNewTabDB';
 const DB_VERSION = 1;
 const BG_STORE_NAME = 'backgrounds';
 

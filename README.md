@@ -325,9 +325,9 @@
 
 ```javascript
 const STORAGE_KEYS = {
-	DATA: "edgeTabData",
-	SETTINGS: "edgeTabSettings",
-	BACKGROUND_IMAGE: "edgeTabBgImage",
+	DATA: "MyLocalNewTabData",
+	SETTINGS: "MyLocalNewTabSettings",
+	BACKGROUND_IMAGE: "MyLocalNewTabBgImage",
 };
 ```
 
@@ -903,9 +903,9 @@ Choose one of four storage methods:
 
 ```javascript
 const STORAGE_KEYS = {
-	DATA: "edgeTabData",
-	SETTINGS: "edgeTabSettings",
-	BACKGROUND_IMAGE: "edgeTabBgImage",
+	DATA: "MyLocalNewTabData",
+	SETTINGS: "MyLocalNewTabSettings",
+	BACKGROUND_IMAGE: "MyLocalNewTabBgImage",
 };
 ```
 

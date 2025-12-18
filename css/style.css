@@ -1287,16 +1287,29 @@ main {
     text-align: center;
 }
 
+/* 标题：真正居中（✎ 不占位），并允许长标题完整显示 */
 .folder-title-wrap h3 {
     margin: 0;
     font-size: 24px;
     font-weight: 600;
     cursor: pointer;
-    padding: 4px 12px;
+
+    position: relative;
+    display: inline-block;
+    /* 让 text-align 生效且可换行 */
+    max-width: 100%;
+    text-align: center;
+
+    white-space: normal;
+    /* 允许换行 */
+    word-break: break-word;
+    /* 超长单词也能断行 */
+    line-height: 1.2;
+
+    /* 对称留白：保证视觉居中，并给右侧✎预留空间 */
+    padding: 4px 44px;
     border-radius: 6px;
     transition: background-color 0.2s ease, color 0.2s ease;
-    display: inline-flex;
-    align-items: center;
 }
 
 .folder-title-wrap h3:hover {
@@ -1304,34 +1317,49 @@ main {
     color: var(--primary-color);
 }
 
+/* ✎：绝对定位，不参与排版宽度（不会把标题挤偏） */
 .folder-title-wrap h3::after {
     content: '✎';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+
     font-size: 18px;
-    margin-left: 8px;
     opacity: 0;
     transition: opacity 0.2s;
+
     color: var(--text-secondary);
     font-weight: normal;
+    pointer-events: none;
 }
 
 .folder-title-wrap h3:hover::after {
     opacity: 1;
 }
 
+/* 编辑输入框：居中、可放宽、长标题也能看全 */
 .folder-title-input {
     font-size: 24px;
     font-weight: 600;
     padding: 4px 12px;
+
     border: 1px solid var(--primary-color);
     border-radius: 6px;
     outline: none;
     text-align: center;
-    width: auto;
+
+    display: block;
+    margin: 0 auto;
+
+    width: min(100%, 560px);
+    /* 你可以把 560 调大/调小 */
     min-width: 120px;
-    max-width: 300px;
+    max-width: 100%;
+
     color: var(--text-color);
     background: var(--input-bg);
-    box-shadow: 0 0 0 2px rgba(0,120,212,0.2);
+    box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
 }
 
 .folder-modal .modal-actions {

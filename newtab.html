@@ -271,12 +271,12 @@
                         <div id="webdavStorageInfo" class="storage-info-item hidden">
                             <h5>WebDAV 同步</h5>
                             <p>需要可外网访问的 WebDAV 端点，支持 HTTPS + 基础认证（用户名 / 密码或应用专用密码）。扩展只会读写一份 JSON 文件，不会创建额外目录。</p>
-                            <p class="path-tip">示例：<code>https://dav.example.com/remote.php/dav/files/&lt;user&gt;/edgeTab-data.json</code></p>
+                            <p class="path-tip">示例：<code>https://dav.example.com/remote.php/dav/files/&lt;user&gt;/MyLocalNewTab-data.json</code></p>
                         </div>
                         <div id="gistStorageInfo" class="storage-info-item hidden">
                             <h5>GitHub Gist 同步</h5>
                             <p>使用 GitHub Personal Access Token（仅需勾选 <code>gist</code> 权限）。可填现有 Gist ID，留空则首次保存时自动创建一个私有 Gist。</p>
-                            <p class="path-tip">默认文件名 <code>edgeTab-data.json</code>，可自定义；Token/Gist ID 仅保存在本地。</p>
+                            <p class="path-tip">默认文件名 <code>MyLocalNewTab-data.json</code>，可自定义；Token/Gist ID 仅保存在本地。</p>
                         </div>
                     </div>
 
@@ -285,7 +285,7 @@
                             <h5>WebDAV 配置</h5>
                             <div class="form-group">
                                 <label for="webdavEndpoint">文件地址（直指 JSON 文件）</label>
-                                <input type="url" id="webdavEndpoint" placeholder="https://dav.example.com/dav/files/user/edgeTab-data.json">
+                                <input type="url" id="webdavEndpoint" placeholder="https://dav.example.com/dav/files/user/MyLocalNewTab-data.json">
                             </div>
                             <div class="form-row">
                                 <div class="form-group flex-1">
@@ -312,7 +312,7 @@
                             </div>
                             <div class="form-group">
                                 <label for="gistFilename">文件名</label>
-                                <input type="text" id="gistFilename" placeholder="edgeTab-data.json">
+                                <input type="text" id="gistFilename" placeholder="MyLocalNewTab-data.json">
                             </div>
                             <p class="tips">Token 和 Gist ID 仅保存在浏览器本地。文件不存在时将自动创建；变更文件名会在同一 Gist 下生成新文件。</p>
                         </div>

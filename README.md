@@ -13,14 +13,14 @@
 
 ## 📦 更新日志
 
-|  版本  |  日期   | 更新内容                                                                   |
-| :----: | :-----: | :------------------------------------------------------------------------- |
-|  v2.0  | 2025-12 | 重新优化背景图加载逻辑，gist 最大 50Mb 的背景图，WebDav 与本地模式不舍限制 |
-| v1.5.3 | 2025-12 | 可修改标签的透明度                                                         |
-| v1.5.2 | 2025-12 | 限制 gist 图片大小，提供压缩，确保 gist 同步时能正常显示背景图             |
-| v1.5.1 | 2025-12 | 新建标签页时默认显示第一个分类                                             |
-|  v1.5  |    -    | 完成所有预期功能                                                           |
-|  v1.0  |    -    | 完成基本框架搭建                                                           |
+|  版本  |  日期   | 更新内容                                                                                                                                           |
+| :----: | :-----: | :------------------------------------------------------------------------------------------------------------------------------------------------- |
+|  v2.0  | 2025-12 | 重构背景图加载逻辑（同步动画、智能缓存）；Gist 支持最大 50MB 背景图（10MB 以上智能压缩提示）；本地与 WebDAV 模式无大小限制；优化文件夹标题显示效果 |
+| v1.5.3 | 2025-12 | 可修改标签的透明度                                                                                                                                 |
+| v1.5.2 | 2025-12 | 限制 gist 图片大小，提供压缩，确保 gist 同步时能正常显示背景图                                                                                     |
+| v1.5.1 | 2025-12 | 新建标签页时默认显示第一个分类                                                                                                                     |
+|  v1.5  |    -    | 完成所有预期功能                                                                                                                                   |
+|  v1.0  |    -    | 完成基本框架搭建                                                                                                                                   |
 
 ---
 
@@ -97,12 +97,15 @@
     - 支持任何兼容 WebDAV 协议的服务（Nextcloud、坚果云等）
     - 需要可外网访问的 WebDAV 端点
     - 支持 HTTPS + 基础认证
-    - 配置示例：`https://dav.example.com/remote.php/dav/files/<user>/edgeTab-data.json`
+    - **背景图无大小限制**，支持二进制存储
+    - 配置示例：`https://dav.example.com/remote.php/dav/files/<user>/MyLocalNewTab-data.json`
 
 4. **GitHub Gist 同步**
+    - 确保可以使用 git 访问仓库以避免权限或网络问题
     - 使用 GitHub Personal Access Token（需 `gist` 权限）
     - 可指定现有 Gist ID，或留空自动创建私有 Gist
-    - 默认文件名 `edgeTab-data.json`，可自定义
+    - 默认文件名 `MyLocalNewTab-data.json`，可自定义
+    - **背景图限制**：最大 50MB，超过 10MB 时提供智能压缩选项
     - Token 和 Gist ID 仅保存在本地
 
 #### 📤 数据导入导出
@@ -113,7 +116,7 @@
     -   **覆盖模式**：完全替换当前数据
 -   **兼容性**：支持本扩展和 WeTab 的数据格式导入
 
-#### 🎭 用户体验
+#### 💻 用户体验
 
 -   **主题**：自动跟随系统深色/浅色模式
 -   **动画**：提供过渡动画和交互反馈
@@ -235,7 +238,7 @@
 1. 打开设置 → 外观 → 背景设置
 2. 选择"本地"
 3. 选择上传方式：
-    - **本地上传**：选择图片文件（建议 ≤2MB 用于浏览器存储，≤4MB 用于 Gist，WebDAV 无大小限制）
+    - **本地上传**：选择图片文件
     - **图片链接**：粘贴图片 URL（推荐 4K 用户使用图床，无大小限制）
 4. 调节透明度（0-100%）
 5. 实时预览效果
@@ -245,7 +248,7 @@
 >
 > -   Base64 编码会使体积增加约 33%
 > -   大图片会导致同步和加载速度明显变慢
-> -   建议图片压缩后 < 4MB，或使用图床服务 + URL 模式
+> -   硬限制：50MB（超过直接拒绝）
 > -   **WebDAV 无大小限制**，支持二进制存储，性能更好，推荐大图片使用
 
 ##### 云端模式
@@ -270,7 +273,7 @@
 
 选择四种存储方式之一：
 
-1. **浏览器存储**（推荐）
+1. **浏览器存储**
 
     - 仅此设备
     - 无容量限制
@@ -289,18 +292,18 @@
         - **用户名**：WebDAV 账号
         - **密码**：WebDAV 密码或应用专用密码
     - 点击"应用配置"验证
-    - 验证成功后可选择同步方向：
+    - 验证成功后务必选择同步方向：
         - **本地覆盖云端**：上传本地数据到远程
         - **合并后上传并生效**：合并本地和远程数据
         - **云端覆盖本地**：下载远程数据覆盖本地
 
-4. **GitHub Gist 同步**
+4. **GitHub Gist 同步** （推荐）
     - 填写配置：
         - **GitHub Token**：[创建 Token](https://github.com/settings/tokens)（仅需 `gist` 权限）
         - **Gist ID**：留空则自动创建
-        - **文件名**：默认 `edgeTab-data.json`
+        - **文件名**：默认 `MyLocalNewTab-data.json`
     - 点击"应用配置"验证
-    - 验证成功后可选择同步方向
+    - 验证成功后务必选择同步方向
 
 ##### 数据转移
 
@@ -332,7 +335,7 @@ const STORAGE_KEYS = {
 
 ```javascript
 const REMOTE_FETCH_TIMEOUT = 12000; // 12秒超时
-const DEFAULT_REMOTE_FILENAME = "edgeTab-data.json";
+const DEFAULT_REMOTE_FILENAME = "MyLocalNewTab-data.json";
 const BACKGROUND_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "avif", "gif"];
 ```
 
@@ -346,6 +349,16 @@ const MAX_CACHED_ICON_BYTES = 500 * 1024; // 单张图标最大 500KB
 
 ```javascript
 const DRAG_LONG_PRESS_MS = 90; // 长按 90ms 激活拖拽
+```
+
+**Gist 背景图配置**：
+
+```javascript
+const GIST_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10MB 压缩目标
+const GIST_HARD_LIMIT = 50 * 1024 * 1024; // 50MB 硬限制
+const GIST_COMPRESS_THRESHOLD = 10 * 1024 * 1024; // 超过 10MB 提示压缩
+const GIST_IMAGE_MAX_WIDTH = 3840; // 4K 分辨率上限
+const GIST_JPEG_INITIAL_QUALITY = 0.85; // JPEG 压缩初始质量
 ```
 
 ---
@@ -372,8 +385,8 @@ const DRAG_LONG_PRESS_MS = 90; // 长按 90ms 激活拖拽
 2. **获取配置信息**
 
     - **文件地址**：完整的 JSON 文件 URL
-        - 示例（Nextcloud）：`https://cloud.example.com/remote.php/dav/files/username/edgeTab-data.json`
-        - 示例（坚果云）：`https://dav.jianguoyun.com/dav/edgeTab-data.json`
+        - 示例（Nextcloud）：`https://cloud.example.com/remote.php/dav/files/username/MyLocalNewTab-data.json`
+        - 示例（坚果云）：`https://dav.jianguoyun.com/dav/MyLocalNewTab-data.json`
     - **用户名**：WebDAV 账号
     - **密码**：WebDAV 密码或应用专用密码（推荐）
 
@@ -419,7 +432,7 @@ const DRAG_LONG_PRESS_MS = 90; // 长按 90ms 激活拖拽
     - Gist ID：
         - **留空**：首次保存时自动创建私有 Gist
         - **填写**：使用现有 Gist（从 Gist URL 中获取）
-    - 文件名：默认 `edgeTab-data.json`，可自定义
+    - 文件名：默认 `MyLocalNewTab-data.json`，可自定义
 
 3. **验证和同步**
     - 点击"应用配置"验证 Token
@@ -550,12 +563,9 @@ const DRAG_LONG_PRESS_MS = 90; // 长按 90ms 激活拖拽
         -   同步速度明显变慢
         -   浏览器解码 Base64 耗时较长
 -   **解决方案**：
-    -   **方案 1**：使用更小的图片（建议压缩后 < 4MB）
+    -   **方案 1**：选择更小体积的图片
     -   **方案 2**：切换到 WebDAV 存储（支持二进制，性能更好，**无大小限制**）
-    -   **方案 3**：使用图床服务（如 imgur.com、sm.ms）+ "图片链接"模式（无大小限制，加载最快）
--   **最佳实践**：
-    -   Gist 适合存储书签数据（文本），不适合大图片
-    -   背景图推荐：图床 URL > WebDAV（无限制） > Gist（≤4MB）
+    -   **方案 3**：切换至本地模式，使用图床服务（如 imgur.com、sm.ms）+ "图片链接"模式（无大小限制，加载最快）
 
 #### 8. 如何备份数据？
 
@@ -672,12 +682,14 @@ Four storage options for different use cases:
     - Support for any WebDAV-compatible service (Nextcloud, Nutstore, etc.)
     - Requires internet-accessible WebDAV endpoint
     - Support for HTTPS + Basic Authentication
-    - Example: `https://dav.example.com/remote.php/dav/files/<user>/edgeTab-data.json`
+    - **No size limit for background images**, supports binary storage
+    - Example: `https://dav.example.com/remote.php/dav/files/<user>/MyLocalNewTab-data.json`
 
 4. **GitHub Gist Sync**
     - Use GitHub Personal Access Token (requires `gist` permission)
     - Specify existing Gist ID, or leave empty to auto-create private Gist
-    - Default filename `edgeTab-data.json`, customizable
+    - Default filename `MyLocalNewTab-data.json`, customizable
+    - **Background image limit**: Max 50MB, smart compression option for files >10MB
     - Token and Gist ID stored locally only
 
 #### 📤 Data Import/Export
@@ -810,7 +822,9 @@ Four storage options for different use cases:
 1. Open Settings → Appearance → Background Settings
 2. Select "Local"
 3. Choose upload method:
-    - **Local Upload**: Select image file (≤2MB recommended for browser storage, ≤10MB for WebDAV/Gist)
+    - **Local Upload**: Select image file
+        - Local/WebDAV mode: No size limit
+        - Gist mode: Max 50MB, optional compression for files >10MB
     - **Image Link**: Paste image URL (recommended for 4K users, no size limit)
 4. Adjust opacity (0-100%)
 5. Real-time preview
@@ -865,7 +879,7 @@ Choose one of four storage methods:
     - Configuration:
         - **GitHub Token**: [Create Token](https://github.com/settings/tokens) (only `gist` permission needed)
         - **Gist ID**: Leave empty to auto-create
-        - **Filename**: Default `edgeTab-data.json`
+        - **Filename**: Default `MyLocalNewTab-data.json`
     - Click "Apply Configuration" to verify
     - After successful verification, choose sync direction
 
@@ -899,7 +913,7 @@ const STORAGE_KEYS = {
 
 ```javascript
 const REMOTE_FETCH_TIMEOUT = 12000; // 12 second timeout
-const DEFAULT_REMOTE_FILENAME = "edgeTab-data.json";
+const DEFAULT_REMOTE_FILENAME = "MyLocalNewTab-data.json";
 const BACKGROUND_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "avif", "gif"];
 ```
 
@@ -913,6 +927,16 @@ const MAX_CACHED_ICON_BYTES = 500 * 1024; // Max 500KB per icon
 
 ```javascript
 const DRAG_LONG_PRESS_MS = 90; // 90ms long-press to activate drag
+```
+
+**Gist Background Image Configuration**:
+
+```javascript
+const GIST_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10MB compression target
+const GIST_HARD_LIMIT = 50 * 1024 * 1024; // 50MB hard limit
+const GIST_COMPRESS_THRESHOLD = 10 * 1024 * 1024; // Prompt compression above 10MB
+const GIST_IMAGE_MAX_WIDTH = 3840; // 4K resolution cap
+const GIST_JPEG_INITIAL_QUALITY = 0.85; // JPEG compression initial quality
 ```
 
 ---
@@ -939,8 +963,8 @@ const DRAG_LONG_PRESS_MS = 90; // 90ms long-press to activate drag
 2. **Get Configuration Info**
 
     - **File URL**: Complete JSON file URL
-        - Example (Nextcloud): `https://cloud.example.com/remote.php/dav/files/username/edgeTab-data.json`
-        - Example (Nutstore): `https://dav.jianguoyun.com/dav/edgeTab-data.json`
+        - Example (Nextcloud): `https://cloud.example.com/remote.php/dav/files/username/MyLocalNewTab-data.json`
+        - Example (Nutstore): `https://dav.jianguoyun.com/dav/MyLocalNewTab-data.json`
     - **Username**: WebDAV account
     - **Password**: WebDAV password or app-specific password (recommended)
 
@@ -986,7 +1010,7 @@ const DRAG_LONG_PRESS_MS = 90; // 90ms long-press to activate drag
     - Gist ID:
         - **Leave empty**: Auto-create private Gist on first save
         - **Fill in**: Use existing Gist (get from Gist URL)
-    - Filename: Default `edgeTab-data.json`, customizable
+    - Filename: Default `MyLocalNewTab-data.json`, customizable
 
 3. **Verify and Sync**
     - Click "Apply Configuration" to verify Token
@@ -1109,7 +1133,22 @@ const DRAG_LONG_PRESS_MS = 90; // 90ms long-press to activate drag
 -   Browser only allows one extension to override new tab page
 -   Disable other new tab extensions
 
-#### 7. How to backup data?
+#### 7. Gist background sync is slow, what to do?
+
+-   **Reason**:
+    -   Gist stores images as Base64 text, large images cause:
+        -   ~33% size increase (Base64 encoding overhead)
+        -   Noticeably slower sync
+        -   Browser takes time to decode Base64
+-   **Solutions**:
+    -   **Option 1**: Choose compression when uploading (auto-prompted for files >10MB)
+    -   **Option 2**: Switch to WebDAV storage (binary support, better performance, **no size limit**)
+    -   **Option 3**: Use image hosting services (e.g., imgur.com, sm.ms) + "Image Link" mode (no size limit, fastest)
+-   **Best Practices**:
+    -   Gist is suitable for bookmark data (text), not ideal for large images
+    -   Background image recommendation: Image hosting URL > WebDAV (unlimited) > Gist (≤10MB or compressed)
+
+#### 8. How to backup data?
 
 -   **Manual Backup**:
     -   Open Settings → Data Transfer → Export Data

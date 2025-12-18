@@ -78,14 +78,14 @@ const DEFAULT_SETTINGS = {
     gist: {
         token: '',
         gistId: '',
-        filename: 'edgeTab-data.json'
+        filename: 'MyLocalNewTab-data.json'
     },
     background: JSON.parse(JSON.stringify(DEFAULT_BACKGROUND)),
     uiOpacity: 1
 };
 
 const DEFAULT_SWATCH_COLOR = '#4ac55c';
-const DEFAULT_REMOTE_FILENAME = 'edgeTab-data.json';
+const DEFAULT_REMOTE_FILENAME = 'MyLocalNewTab-data.json';
 const REMOTE_FETCH_TIMEOUT = 12000;
 
 const IMPORT_SOURCES = {
@@ -1991,15 +1991,6 @@ function renderBookmarkCollection(bookmarks, container, context = {}) {
         document.body.appendChild(draggingEl);
     }
 
-    if (!items.length && context.scope === 'folder') {
-        const empty = document.createElement('div');
-        empty.textContent = '文件夹内暂无网站';
-        empty.className = 'folder-empty';
-        if (!context.skipAnimation) {
-            empty.style.animation = 'fadeIn 0.5s ease-out';
-        }
-        container.appendChild(empty);
-    }
     items.forEach((bm, index) => {
         const card = createBookmarkCard(bm, { ...context, container });
         if (context.skipAnimation) {
@@ -3602,13 +3593,13 @@ function buildStaticIconCandidates(urlObj) {
             src: `https://logo.clearbit.com/${hostname}?size=256`,
             label: 'Clearbit 256px',
             source: 'Clearbit',
-            priority: 6
+            priority: 5
         },
         {
             src: `https://www.google.com/s2/favicons?domain=${encodedHostname}&sz=256`,
             label: 'Google S2 256px',
             source: 'Google S2',
-            priority: 5
+            priority: 6
         },
         {
             src: `https://www.google.com/s2/favicons?domain=${encodedHostname}&sz=128`,

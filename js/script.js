@@ -7,13 +7,11 @@ function generateHighResIconMeta(urlString) {
         const encodedOrigin = encodeURIComponent(origin);
 
         const candidates = [
-            `https://logo.clearbit.com/${hostname}?size=256`,
             `https://www.google.com/s2/favicons?domain=${encodedHostname}&sz=256`,
             `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodedOrigin}&size=256`,
             `https://www.google.com/s2/favicons?domain=${encodedHostname}&sz=128`,
             `https://icons.duckduckgo.com/ip3/${hostname}.ico`,
             `${origin}/favicon.ico`,
-            `https://logo.clearbit.com/${hostname}?format=svg`,
             `${origin}/favicon.svg`
         ];
 
@@ -90,7 +88,9 @@ const REMOTE_FETCH_TIMEOUT = 12000;
 
 const IMPORT_SOURCES = {
     EDGE_TAB: 'MyLocalNewTab',
-    WETAB: 'wetab'
+    WETAB: 'wetab',
+    EDGE_BOOKMARK: 'edge_bookmark',
+    SAFARI_BOOKMARK: 'safari_bookmark'
 };
 
 const IMPORT_MODES = {
@@ -281,6 +281,14 @@ let folderAnchorSnapshot = {
     folderId: null,
     rect: null,
     element: null
+};
+
+// 批量选择相关状态
+const batchSelectState = {
+    enabled: false,
+    selectedIds: new Set(),
+    categoryId: null,
+    folderId: null
 };
 
 function syncThemeWithSystem() {
@@ -512,7 +520,8 @@ function moveBookmarkTo(bookmarkId, targetCategoryId, targetFolderId = null, tar
         checkAndRemoveEmptyFolder(removed.parentFolderId, removed.categoryId);
     }
 
-    saveData();
+    // 拖拽操作完成后立即保存，避免用户快速切换标签页时数据丢失
+    saveData({ immediate: true });
     // 拖拽操作统一跳过全局刷新动画，仅在同列表时尝试 DOM 重用
     const isSameList = removed.categoryId === targetCategoryId && removed.parentFolderId === targetFolderId;
     
@@ -533,6 +542,7 @@ function moveBookmarkTo(bookmarkId, targetCategoryId, targetFolderId = null, tar
 let pendingStorageMode = STORAGE_MODES.BROWSER;
 let remoteActionsEnabled = false;
 let pointerDownOutsideModal = false;
+let pointerDownOnContextMenu = false;
 
 // DOM 元素
 const els = {
@@ -634,7 +644,14 @@ const els = {
     gistStorageInfo: document.getElementById('gistStorageInfo'),
     webdavConfig: document.getElementById('webdavConfig'),
     gistConfig: document.getElementById('gistConfig'),
-    remoteActions: document.getElementById('remoteActions')
+    remoteActions: document.getElementById('remoteActions'),
+    
+    // 书签搜索
+    bookmarkSearchInput: document.getElementById('bookmarkSearchInput'),
+    clearBookmarkSearch: document.getElementById('clearBookmarkSearch'),
+    searchResultsPanel: document.getElementById('searchResultsPanel'),
+    searchResultsGrid: document.getElementById('searchResultsGrid'),
+    searchResultsCount: document.getElementById('searchResultsCount')
 };
 
 // 初始化
@@ -723,8 +740,8 @@ async function initializeApp() {
         syncRemoteDataInBackground(localSnapshot);
     }
 
-    // 9. 后台预热图标缓存
-    warmIconCacheForBookmarks();
+    // 9. 图标缓存已在编辑时按需获取，无需批量预热
+    // warmIconCacheForBookmarks();
     
     // 10. 如果是云端背景模式，后台检查更新
     if (appSettings.background?.mode === 'cloud') {
@@ -745,15 +762,25 @@ async function syncRemoteDataInBackground(localSnapshot) {
         }
         
         if (remoteData && Array.isArray(remoteData.categories)) {
-            // 检查远端数据是否与本地不同
-            const localJson = JSON.stringify(localSnapshot?.categories || []);
-            const remoteJson = JSON.stringify(remoteData.categories);
+            // 使用更完整的数据比较（包含所有关键字段）
+            const localHash = computeDataHash(localSnapshot);
+            const remoteHash = computeDataHash(remoteData);
+            const currentHash = computeDataHash(appData);
             
-            if (localJson !== remoteJson) {
+            // 只有当远程数据与当前内存数据不同时才更新
+            if (remoteHash !== currentHash) {
+                // 保留用户当前选择的分类（如果在新数据中仍然存在）
+                const userSelectedCategory = appData.activeCategory;
+                const categoryStillExists = remoteData.categories.some(c => c.id === userSelectedCategory);
+                
                 // 远端有更新，更新本地数据并重新渲染
                 appData = remoteData;
                 ensureActiveCategory();
-                if (appData.categories && appData.categories.length > 0) {
+                
+                // 优先保留用户已选择的分类，只有当该分类不存在时才回退到第一个
+                if (categoryStillExists) {
+                    appData.activeCategory = userSelectedCategory;
+                } else if (appData.categories && appData.categories.length > 0) {
                     appData.activeCategory = appData.categories[0].id;
                 }
                 renderApp({ skipAnimation: true });
@@ -764,8 +791,10 @@ async function syncRemoteDataInBackground(localSnapshot) {
             maybeSyncUiOpacityFromData(remoteData, { saveSettingsFlag: true });
             attachBackgroundToData(appData);
             
-            // 确保本地存储是最新的
-            await persistDataToArea(chrome.storage.local, appData);
+            // 确保本地存储与远程同步（即使数据相同也更新，确保一致性）
+            if (remoteHash !== localHash) {
+                await persistDataToArea(chrome.storage.local, appData);
+            }
         }
     } catch (error) {
         console.warn('后台同步远端数据失败', error);
@@ -799,6 +828,64 @@ function maybeSyncBackgroundFromDataQuiet(data) {
     
     // 背景确实不同，才重新加载
     return maybeSyncBackgroundFromData(data, { saveSettingsFlag: true });
+}
+
+// 检查并同步最新数据（页面重新可见时调用）
+async function checkAndSyncLatestData() {
+    try {
+        // 从本地存储读取最新数据
+        const localSnapshot = await readLocalDataSnapshot();
+        if (!localSnapshot || !Array.isArray(localSnapshot.categories)) {
+            return;
+        }
+        
+        // 比较数据是否有变化（使用更精确的比较）
+        const currentDataHash = computeDataHash(appData);
+        const localDataHash = computeDataHash(localSnapshot);
+        
+        if (currentDataHash !== localDataHash) {
+            // 保留用户当前选择的分类（如果在新数据中仍然存在）
+            const userSelectedCategory = appData.activeCategory;
+            
+            // 本地存储有更新的数据，更新内存并重新渲染
+            appData = localSnapshot;
+            ensureActiveCategory();
+            // 保持当前活动分类，如果存在的话
+            const currentActiveExists = appData.categories.some(c => c.id === userSelectedCategory);
+            if (currentActiveExists) {
+                appData.activeCategory = userSelectedCategory;
+            } else if (appData.categories.length > 0) {
+                appData.activeCategory = appData.categories[0].id;
+            }
+            renderApp({ skipAnimation: true });
+            
+            // 同步背景和 UI 透明度
+            maybeSyncBackgroundFromDataQuiet(localSnapshot);
+            maybeSyncUiOpacityFromData(localSnapshot, { saveSettingsFlag: true });
+        }
+        
+        // 如果是远程模式，后台检查远程更新
+        if (isRemoteMode(appSettings.storageMode)) {
+            syncRemoteDataInBackground(localSnapshot);
+        }
+    } catch (error) {
+        console.warn('检查数据更新失败', error);
+    }
+}
+
+// 计算数据哈希值用于快速比较
+function computeDataHash(data) {
+    if (!data) return '';
+    try {
+        // 只比较关键字段，忽略运行时状态
+        const keyData = {
+            categories: data.categories,
+            activeCategory: data.activeCategory
+        };
+        return JSON.stringify(keyData);
+    } catch (e) {
+        return '';
+    }
 }
 
 function updateSearchPlaceholder(engine) {
@@ -974,25 +1061,75 @@ async function loadFolderFromLocalSnapshot(folderId) {
 }
 
 let saveDataDebounceTimer = null;
+let pendingSavePromise = null;
+let pendingSaveResolvers = [];
+
+// 刷新待保存的数据（用于页面卸载时确保数据已保存）
+async function flushSaveData() {
+    if (saveDataDebounceTimer) {
+        clearTimeout(saveDataDebounceTimer);
+        saveDataDebounceTimer = null;
+        try {
+            await persistAppData(appData, {});
+            // 解析所有等待的 Promise
+            pendingSaveResolvers.forEach(r => r.resolve());
+        } catch (error) {
+            pendingSaveResolvers.forEach(r => r.reject(error));
+        }
+        pendingSaveResolvers = [];
+        pendingSavePromise = null;
+    }
+    return pendingSavePromise;
+}
+
 async function saveData(options = {}) {
-    // 防抖保存，避免频繁写入
+    const { immediate = false, ...restOptions } = options;
+    
+    // 如果要求立即保存，直接执行
+    if (immediate) {
+        if (saveDataDebounceTimer) {
+            clearTimeout(saveDataDebounceTimer);
+            saveDataDebounceTimer = null;
+            // 解析之前等待的 Promise
+            pendingSaveResolvers.forEach(r => r.resolve());
+            pendingSaveResolvers = [];
+        }
+        try {
+            await persistAppData(appData, restOptions);
+        } catch (error) {
+            console.error('保存数据失败:', error);
+            if (restOptions.notifyOnError) {
+                alert(`保存数据失败: ${error.message}`);
+            }
+            throw error;
+        }
+        return;
+    }
+    
+    // 防抖保存，避免频繁写入（缩短到 50ms）
     if (saveDataDebounceTimer) {
         clearTimeout(saveDataDebounceTimer);
     }
+    
     return new Promise((resolve, reject) => {
+        pendingSaveResolvers.push({ resolve, reject });
+        
         saveDataDebounceTimer = setTimeout(async () => {
             saveDataDebounceTimer = null;
+            const resolvers = pendingSaveResolvers;
+            pendingSaveResolvers = [];
+            
             try {
-                await persistAppData(appData, options);
-                resolve();
+                await persistAppData(appData, restOptions);
+                resolvers.forEach(r => r.resolve());
             } catch (error) {
                 console.error('保存数据失败:', error);
-                if (options.notifyOnError) {
+                if (restOptions.notifyOnError) {
                     alert(`保存数据失败: ${error.message}`);
                 }
-                reject(error);
+                resolvers.forEach(r => r.reject(error));
             }
-        }, 100);
+        }, 50); // 缩短防抖时间到 50ms
     });
 }
 
@@ -1519,7 +1656,7 @@ async function handleRemoteSyncAction(action) {
         saveSettings();
         await persistAppData(appData, { mode, notifyOnError: true });
         renderApp();
-        warmIconCacheForBookmarks();
+        // 图标缓存已在编辑时按需获取，无需批量预热
         alert(action === 'merge' ? '合并并上传完成，已生效。' : '已用云端数据覆盖本地并生效。');
     } catch (error) {
         console.error('远程同步失败', error);
@@ -1651,6 +1788,11 @@ function purgeUnusedCachedIcons() {
 }
 
 let isWarmingIconCache = false;
+/**
+ * 预热书签图标缓存
+ * 只缓存每个书签的主图标（bm.icon），如果主图标已缓存则跳过该书签
+ * 不会缓存备选图标（iconFallbacks），备选图标仅在编辑时按需获取
+ */
 async function warmIconCacheForBookmarks() {
     if (isWarmingIconCache) return;
     if (!appData || !Array.isArray(appData.categories)) return;
@@ -1660,11 +1802,13 @@ async function warmIconCacheForBookmarks() {
         const targets = new Set();
         appData.categories.forEach(cat => {
             walkCategoryBookmarks(cat, (bm) => {
-                [bm.icon, ...(bm.iconFallbacks || [])].forEach(url => {
-                    if (url && !url.startsWith('data:') && !(iconCache && iconCache[url])) {
-                        targets.add(url);
-                    }
-                });
+                const primaryIcon = bm.icon;
+                // 只缓存主图标，且仅当主图标未缓存时才添加到队列
+                if (primaryIcon && 
+                    !primaryIcon.startsWith('data:') && 
+                    !(iconCache && iconCache[primaryIcon])) {
+                    targets.add(primaryIcon);
+                }
             });
         });
         if (!targets.size) return;
@@ -1774,7 +1918,8 @@ function moveCategoryToIndex(categoryId, targetIndex) {
     if (fromIndex === clampedTarget) return;
     const [cat] = appData.categories.splice(fromIndex, 1);
     appData.categories.splice(clampedTarget, 0, cat);
-    saveData();
+    // 分类顺序调整是用户主动操作，立即保存
+    saveData({ immediate: true });
     renderCategories({ skipAnimation: true });
 }
 
@@ -1921,6 +2066,16 @@ function renderCategories(options = {}) {
                 li.dataset.dragActive = '0';
                 return;
             }
+            // 切换分类时退出批量选择模式
+            if (batchSelectState.enabled) {
+                toggleBatchSelectMode(false);
+            }
+            // 切换分类时清除搜索
+            if (bookmarkSearchState.isSearching) {
+                els.bookmarkSearchInput.value = '';
+                els.clearBookmarkSearch?.classList.add('hidden');
+                clearBookmarkSearch();
+            }
             appData.activeCategory = cat.id;
             saveData();
             if (openFolderCategoryId && openFolderCategoryId !== cat.id) {
@@ -1928,6 +2083,12 @@ function renderCategories(options = {}) {
             }
             renderApp();
         };
+        // 右键菜单
+        li.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showCategoryContextMenu(cat.id, e.clientX, e.clientY);
+        });
         setupCategoryDragHandlers(li, cat.id);
         els.categoryList.appendChild(li);
 
@@ -2096,6 +2257,11 @@ function createBookmarkCard(bm, context = {}) {
     if (isFolder) {
         card.addEventListener('click', (e) => {
             e.preventDefault();
+            // 批量选择模式下的点击处理
+            if (batchSelectState.enabled) {
+                toggleBookmarkSelection(bm.id, card);
+                return;
+            }
             const anchorOptions = { anchorElement: card };
             if (openFolderId && document.startViewTransition) {
                 document.startViewTransition(() => {
@@ -2103,6 +2269,14 @@ function createBookmarkCard(bm, context = {}) {
                 });
             } else {
                 openFolderModal(bm.id, anchorOptions);
+            }
+        });
+    } else {
+        // 普通书签的批量选择点击处理
+        card.addEventListener('click', (e) => {
+            if (batchSelectState.enabled) {
+                e.preventDefault();
+                toggleBookmarkSelection(bm.id, card);
             }
         });
     }
@@ -2118,6 +2292,14 @@ function createBookmarkCard(bm, context = {}) {
         }
     });
     card.addEventListener('dragleave', () => card.classList.remove('folder-drop-ready'));
+    
+    // 书签卡片右键菜单
+    card.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showBookmarkContextMenu(bm, context, e.clientX, e.clientY, card);
+    });
+    
     return card;
 }
 
@@ -2125,6 +2307,12 @@ async function openFolderModal(folderBookmark, options = {}) {
     if (!els.folderModal || !els.folderContent) return;
     const folderId = typeof folderBookmark === 'string' ? folderBookmark : folderBookmark?.id;
     if (!folderId) return;
+    
+    // 打开文件夹时，如果在不同层级则退出批量选择模式
+    if (batchSelectState.enabled && batchSelectState.folderId !== folderId) {
+        toggleBatchSelectMode(false);
+    }
+    
     try {
         const loc = findBookmarkLocation(folderId);
         if (!loc || loc.bookmark.type !== 'folder') {
@@ -2494,6 +2682,10 @@ function setupBookmarkCardDrag(card, bookmarkId, context = {}) {
     };
 
     const startLongPress = (event) => {
+        // 批量选择模式下禁用拖拽
+        if (batchSelectState.enabled) {
+            return;
+        }
         if ((event.pointerType === 'mouse' && event.button !== 0) || event.target.closest('.action-btn')) {
             return;
         }
@@ -2780,7 +2972,8 @@ function createFolderFromPair(targetLoc, draggingLoc) {
     };
     normalizeFolderChildTitles(folderTitle, folderBookmark.children);
     insertBookmarkToList(targetList, Math.max(0, insertIndex), folderBookmark);
-    saveData();
+    // 拖拽创建文件夹是重要操作，立即保存
+    saveData({ immediate: true });
     renderApp({ skipAnimation: true });
     refreshOpenFolderView({ skipAnimation: true });
     return folderBookmark;
@@ -2811,7 +3004,8 @@ function moveBookmarkIntoFolder(bookmarkId, folderId) {
     }
 
     normalizeFolderChildTitles(folderLoc.bookmark.title, folderLoc.bookmark.children);
-    saveData();
+    // 移动书签到文件夹是重要操作，立即保存
+    saveData({ immediate: true });
     renderApp({ skipAnimation: true });
     refreshOpenFolderView({ skipAnimation: true });
     return true;
@@ -2841,6 +3035,1335 @@ function bindFolderExitDropzone() {
 }
 // --- 业务逻辑 ---
 
+// --- 右键菜单 ---
+function showCategoryContextMenu(categoryId, x, y) {
+    // 移除已有的所有右键菜单
+    hideCategoryContextMenu();
+    hideBookmarkContextMenu();
+    hideGridContextMenu();
+    hideBatchMoveMenu();
+    
+    const cat = getCategoryById(categoryId);
+    if (!cat) return;
+    
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.id = 'categoryContextMenu';
+    
+    // 重命名选项
+    const renameItem = document.createElement('div');
+    renameItem.className = 'context-menu-item';
+    renameItem.innerHTML = '<span class="context-menu-icon">✎</span>重命名';
+    renameItem.onclick = () => {
+        hideCategoryContextMenu();
+        enableCategoryRename(categoryId);
+    };
+    menu.appendChild(renameItem);
+    
+    // 删除选项（只有多于一个分类时才显示）
+    if (appData.categories.length > 1) {
+        const deleteItem = document.createElement('div');
+        deleteItem.className = 'context-menu-item danger';
+        deleteItem.innerHTML = '<span class="context-menu-icon">×</span>删除分类';
+        deleteItem.onclick = () => {
+            hideCategoryContextMenu();
+            deleteCategory(categoryId);
+        };
+        menu.appendChild(deleteItem);
+    }
+    
+    document.body.appendChild(menu);
+    
+    // 调整菜单位置，确保不超出屏幕
+    adjustMenuPosition(menu, x, y);
+    
+    // 点击其他位置关闭菜单
+    setTimeout(() => {
+        addCategoryContextMenuListeners();
+    }, 0);
+}
+
+// 分类右键菜单事件监听器管理
+let categoryContextMenuClickHandler = null;
+let categoryContextMenuContextHandler = null;
+
+function addCategoryContextMenuListeners() {
+    removeCategoryContextMenuListeners();
+    categoryContextMenuClickHandler = (e) => {
+        const menu = document.getElementById('categoryContextMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideCategoryContextMenu();
+        }
+    };
+    categoryContextMenuContextHandler = (e) => {
+        const menu = document.getElementById('categoryContextMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideCategoryContextMenu();
+        }
+    };
+    document.addEventListener('click', categoryContextMenuClickHandler);
+    document.addEventListener('contextmenu', categoryContextMenuContextHandler);
+}
+
+function removeCategoryContextMenuListeners() {
+    if (categoryContextMenuClickHandler) {
+        document.removeEventListener('click', categoryContextMenuClickHandler);
+        categoryContextMenuClickHandler = null;
+    }
+    if (categoryContextMenuContextHandler) {
+        document.removeEventListener('contextmenu', categoryContextMenuContextHandler);
+        categoryContextMenuContextHandler = null;
+    }
+}
+
+function hideCategoryContextMenu() {
+    removeCategoryContextMenuListeners();
+    const menu = document.getElementById('categoryContextMenu');
+    if (menu) {
+        menu.remove();
+    }
+}
+
+function enableCategoryRename(categoryId) {
+    const cat = getCategoryById(categoryId);
+    if (!cat) return;
+    
+    const li = els.categoryList.querySelector(`li[data-id="${categoryId}"]`);
+    if (!li) return;
+    
+    const currentName = cat.name;
+    const delBtn = li.querySelector('.delete-cat');
+    
+    // 隐藏删除按钮
+    if (delBtn) {
+        delBtn.style.display = 'none';
+    }
+    
+    // 清空 li 内容，创建输入框
+    li.textContent = '';
+    
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentName;
+    input.className = 'category-rename-input';
+    li.appendChild(input);
+    
+    // 恢复删除按钮节点（隐藏状态）
+    if (delBtn) {
+        li.appendChild(delBtn);
+    }
+    
+    input.focus();
+    input.select();
+    
+    const save = () => {
+        const newName = input.value.trim();
+        if (newName && newName !== currentName) {
+            cat.name = newName;
+            // 重命名是用户主动操作，立即保存
+            saveData({ immediate: true });
+        }
+        cleanup();
+        renderCategories({ skipAnimation: true });
+    };
+    
+    const cleanup = () => {
+        input.removeEventListener('blur', save);
+        input.removeEventListener('keydown', handleKeydown);
+    };
+    
+    const handleKeydown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            save();
+        } else if (e.key === 'Escape') {
+            cleanup();
+            renderCategories({ skipAnimation: true });
+        }
+    };
+    
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', handleKeydown);
+}
+
+// 通用菜单位置调整函数，确保菜单不超出屏幕边界
+// 智能决定菜单的展开方向：优先向右下展开，空间不足时向反方向展开
+function adjustMenuPosition(menu, x, y) {
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const padding = 8;
+    
+    // 先临时设置位置以获取真实尺寸（不要立即限制maxHeight，让它先按自然高度渲染）
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    menu.style.visibility = 'hidden';
+    
+    // 强制重排以获取准确尺寸
+    const menuRect = menu.getBoundingClientRect();
+    let menuWidth = menuRect.width;
+    let menuHeight = menuRect.height;
+    
+    menu.style.visibility = '';
+    
+    // 计算可用的最大尺寸
+    const maxWidth = viewportWidth - padding * 2;
+    const maxHeight = viewportHeight - padding * 2;
+    
+    // 如果菜单超出视口，则限制其尺寸
+    if (menuWidth > maxWidth) {
+        menu.style.maxWidth = `${maxWidth}px`;
+        menuWidth = maxWidth;
+    }
+    if (menuHeight > maxHeight) {
+        menu.style.maxHeight = `${maxHeight}px`;
+        menu.style.overflowY = 'auto';
+        menuHeight = maxHeight;
+    }
+    
+    let finalX, finalY;
+    
+    // 水平方向：计算右侧和左侧的可用空间
+    const spaceRight = viewportWidth - x - padding;
+    const spaceLeft = x - padding;
+    
+    if (menuWidth <= spaceRight) {
+        // 右侧空间足够，向右展开
+        finalX = x;
+    } else if (menuWidth <= spaceLeft) {
+        // 右侧不够但左侧够，向左展开
+        finalX = x - menuWidth;
+    } else {
+        // 两侧都不够，靠近空间大的一侧并贴边
+        if (spaceRight >= spaceLeft) {
+            finalX = viewportWidth - menuWidth - padding;
+        } else {
+            finalX = padding;
+        }
+    }
+    
+    // 垂直方向：计算下方和上方的可用空间
+    const spaceBottom = viewportHeight - y - padding;
+    const spaceTop = y - padding;
+    
+    if (menuHeight <= spaceBottom) {
+        // 下方空间足够，向下展开
+        finalY = y;
+    } else if (menuHeight <= spaceTop) {
+        // 下方不够但上方够，向上展开
+        finalY = y - menuHeight;
+    } else {
+        // 上下空间都不够放置完整菜单
+        // 将菜单放在空间较大的一侧，并确保不超出边界
+        if (spaceBottom >= spaceTop) {
+            // 下方空间更大，从点击位置向下展开，但限制高度
+            finalY = y;
+            const availableHeight = viewportHeight - y - padding;
+            if (menuHeight > availableHeight) {
+                menu.style.maxHeight = `${availableHeight}px`;
+                menu.style.overflowY = 'auto';
+            }
+        } else {
+            // 上方空间更大，从顶部开始，向下延伸到点击位置
+            finalY = padding;
+            const availableHeight = y - padding;
+            if (menuHeight > availableHeight) {
+                menu.style.maxHeight = `${availableHeight}px`;
+                menu.style.overflowY = 'auto';
+            }
+        }
+    }
+    
+    // 最终边界检查，确保不会出现负值或超出视口
+    finalX = Math.max(padding, finalX);
+    finalY = Math.max(padding, finalY);
+    
+    // 确保菜单右边和下边不超出
+    if (finalX + menuWidth > viewportWidth - padding) {
+        finalX = viewportWidth - menuWidth - padding;
+    }
+    if (finalY + menuHeight > viewportHeight - padding) {
+        finalY = viewportHeight - menuHeight - padding;
+    }
+    
+    // 再次确保不为负
+    finalX = Math.max(padding, finalX);
+    finalY = Math.max(padding, finalY);
+    
+    menu.style.left = `${finalX}px`;
+    menu.style.top = `${finalY}px`;
+}
+
+// --- 批量选择相关函数 ---
+function toggleBatchSelectMode(enable = !batchSelectState.enabled) {
+    batchSelectState.enabled = enable;
+    if (!enable) {
+        clearBatchSelection();
+    }
+    updateBatchSelectUI();
+}
+
+function clearBatchSelection() {
+    batchSelectState.selectedIds.clear();
+    batchSelectState.categoryId = null;
+    batchSelectState.folderId = null;
+    document.querySelectorAll('.bookmark-card.batch-selected').forEach(card => {
+        card.classList.remove('batch-selected');
+    });
+    updateBatchStatusBar();
+}
+
+function toggleBookmarkSelection(bookmarkId, card) {
+    if (!batchSelectState.enabled) return;
+    
+    const loc = findBookmarkLocation(bookmarkId);
+    if (!loc) return;
+    
+    // 确保只能选择同一层级的书签
+    if (batchSelectState.selectedIds.size > 0) {
+        if (batchSelectState.categoryId !== loc.categoryId || 
+            batchSelectState.folderId !== loc.parentFolderId) {
+            // 不同层级，先清除之前的选择
+            clearBatchSelection();
+        }
+    }
+    
+    if (batchSelectState.selectedIds.has(bookmarkId)) {
+        batchSelectState.selectedIds.delete(bookmarkId);
+        card.classList.remove('batch-selected');
+    } else {
+        batchSelectState.selectedIds.add(bookmarkId);
+        batchSelectState.categoryId = loc.categoryId;
+        batchSelectState.folderId = loc.parentFolderId;
+        card.classList.add('batch-selected');
+    }
+    
+    updateBatchStatusBar();
+}
+
+function updateBatchSelectUI() {
+    const container = document.querySelector('.container');
+    if (batchSelectState.enabled) {
+        container.classList.add('batch-select-mode');
+        document.body.classList.add('batch-select-active');
+        showBatchStatusBar();
+    } else {
+        container.classList.remove('batch-select-mode');
+        document.body.classList.remove('batch-select-active');
+        hideBatchStatusBar();
+    }
+    
+    // 更新所有卡片的选择状态（包括文件夹模态框内的）
+    document.querySelectorAll('.bookmark-card').forEach(card => {
+        if (batchSelectState.enabled) {
+            card.classList.add('batch-selectable');
+        } else {
+            card.classList.remove('batch-selectable', 'batch-selected');
+        }
+    });
+}
+
+function showBatchStatusBar() {
+    let bar = document.getElementById('batchStatusBar');
+    if (!bar) {
+        bar = createBatchStatusBar();
+        document.body.appendChild(bar);
+    }
+    bar.classList.remove('hidden');
+    updateBatchStatusBar();
+}
+
+function hideBatchStatusBar() {
+    const bar = document.getElementById('batchStatusBar');
+    if (bar) {
+        bar.classList.add('hidden');
+    }
+}
+
+function createBatchStatusBar() {
+    const bar = document.createElement('div');
+    bar.id = 'batchStatusBar';
+    bar.className = 'batch-status-bar';
+    
+    const countSpan = document.createElement('span');
+    countSpan.className = 'batch-count';
+    countSpan.textContent = '已选择 0 项';
+    
+    const selectAllBtn = document.createElement('button');
+    selectAllBtn.className = 'batch-action-btn';
+    selectAllBtn.textContent = '全选';
+    selectAllBtn.onclick = () => batchSelectAll();
+    
+    const tipSpan = document.createElement('span');
+    tipSpan.className = 'batch-tip';
+    tipSpan.textContent = '右键选中项进行操作';
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'batch-cancel-btn';
+    cancelBtn.textContent = '取消';
+    cancelBtn.onclick = () => toggleBatchSelectMode(false);
+    
+    bar.appendChild(countSpan);
+    bar.appendChild(selectAllBtn);
+    bar.appendChild(tipSpan);
+    bar.appendChild(cancelBtn);
+    
+    return bar;
+}
+
+function updateBatchStatusBar() {
+    const bar = document.getElementById('batchStatusBar');
+    if (!bar) return;
+    
+    const count = batchSelectState.selectedIds.size;
+    const countSpan = bar.querySelector('.batch-count');
+    if (countSpan) {
+        countSpan.textContent = `已选择 ${count} 项`;
+    }
+    
+    // 更新全选按钮状态
+    const selectAllBtn = bar.querySelector('.batch-action-btn');
+    if (selectAllBtn) {
+        const totalCount = getCurrentViewBookmarkCount();
+        const allSelected = count > 0 && count === totalCount;
+        selectAllBtn.textContent = allSelected ? '取消全选' : '全选';
+        selectAllBtn.onclick = allSelected ? () => clearBatchSelection() : () => batchSelectAll();
+    }
+}
+
+// 获取当前视图中的书签数量
+function getCurrentViewBookmarkCount() {
+    // 如果在文件夹内
+    if (openFolderId && els.folderModal && !els.folderModal.classList.contains('hidden')) {
+        const loc = findBookmarkLocation(openFolderId);
+        if (loc && loc.bookmark.type === 'folder') {
+            return (loc.bookmark.children || []).length;
+        }
+    }
+    // 否则是根分类
+    const currentCat = getActiveCategory();
+    return currentCat ? (currentCat.bookmarks || []).length : 0;
+}
+
+// 全选当前视图中的所有书签
+function batchSelectAll() {
+    if (!batchSelectState.enabled) return;
+    
+    let bookmarks = [];
+    let categoryId = appData.activeCategory;
+    let folderId = null;
+    
+    // 如果在文件夹内
+    if (openFolderId && els.folderModal && !els.folderModal.classList.contains('hidden')) {
+        const loc = findBookmarkLocation(openFolderId);
+        if (loc && loc.bookmark.type === 'folder') {
+            bookmarks = loc.bookmark.children || [];
+            categoryId = loc.categoryId;
+            folderId = openFolderId;
+        }
+    } else {
+        // 根分类
+        const currentCat = getActiveCategory();
+        if (currentCat) {
+            bookmarks = currentCat.bookmarks || [];
+            categoryId = currentCat.id;
+        }
+    }
+    
+    // 清除之前的选择
+    batchSelectState.selectedIds.clear();
+    batchSelectState.categoryId = categoryId;
+    batchSelectState.folderId = folderId;
+    
+    // 选中所有书签
+    bookmarks.forEach(bm => {
+        if (bm && bm.id) {
+            batchSelectState.selectedIds.add(bm.id);
+        }
+    });
+    
+    // 更新UI
+    document.querySelectorAll('.bookmark-card').forEach(card => {
+        const id = card.dataset.id;
+        if (batchSelectState.selectedIds.has(id)) {
+            card.classList.add('batch-selected');
+        } else {
+            card.classList.remove('batch-selected');
+        }
+    });
+    
+    updateBatchStatusBar();
+}
+
+// 书签右键菜单
+function showBookmarkContextMenu(bm, context, x, y, card) {
+    hideBookmarkContextMenu();
+    hideGridContextMenu();
+    hideBatchMoveMenu();
+    
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.id = 'bookmarkContextMenu';
+    
+    // 保存原始右键位置，供子菜单使用
+    const originalX = x;
+    const originalY = y;
+    
+    const isFolder = bm.type === 'folder';
+    
+    // 批量选择模式下的菜单
+    if (batchSelectState.enabled && batchSelectState.selectedIds.size > 0) {
+        const count = batchSelectState.selectedIds.size;
+        
+        // 创建文件夹（至少2个）
+        if (count >= 2) {
+            const createFolderItem = document.createElement('div');
+            createFolderItem.className = 'context-menu-item';
+            createFolderItem.innerHTML = '<span class="context-menu-icon">📁</span>创建文件夹';
+            createFolderItem.onclick = () => {
+                hideBookmarkContextMenu();
+                batchCreateFolder();
+            };
+            menu.appendChild(createFolderItem);
+        }
+        
+        // 移动到分类/文件夹
+        const moveItem = document.createElement('div');
+        moveItem.className = 'context-menu-item';
+        moveItem.innerHTML = '<span class="context-menu-icon">📂</span>移动到...';
+        moveItem.onclick = (e) => {
+            // 先移除当前菜单的事件监听器，防止影响下一个菜单
+            removeBookmarkContextMenuListeners();
+            hideBookmarkContextMenu();
+            // 使用setTimeout确保当前菜单完全关闭后再打开新菜单
+            // 使用原始右键位置而不是点击菜单项的位置
+            setTimeout(() => {
+                showBatchMoveMenuAt(originalX, originalY);
+            }, 0);
+        };
+        menu.appendChild(moveItem);
+        
+        // 分隔线
+        const divider1 = document.createElement('div');
+        divider1.className = 'context-menu-divider';
+        menu.appendChild(divider1);
+        
+        // 批量删除
+        const deleteItem = document.createElement('div');
+        deleteItem.className = 'context-menu-item danger';
+        deleteItem.innerHTML = '<span class="context-menu-icon">×</span>删除所选项';
+        deleteItem.onclick = () => {
+            hideBookmarkContextMenu();
+            batchDeleteSelected();
+        };
+        menu.appendChild(deleteItem);
+        
+        // 分隔线
+        const divider2 = document.createElement('div');
+        divider2.className = 'context-menu-divider';
+        menu.appendChild(divider2);
+        
+        // 取消选择
+        const cancelItem = document.createElement('div');
+        cancelItem.className = 'context-menu-item';
+        cancelItem.innerHTML = '<span class="context-menu-icon">✕</span>取消选择';
+        cancelItem.onclick = () => {
+            hideBookmarkContextMenu();
+            toggleBatchSelectMode(false);
+        };
+        menu.appendChild(cancelItem);
+    } else {
+        // 普通模式下的菜单
+        // 编辑
+        const editItem = document.createElement('div');
+        editItem.className = 'context-menu-item';
+        editItem.innerHTML = '<span class="context-menu-icon">✎</span>编辑';
+        editItem.onclick = () => {
+            hideBookmarkContextMenu();
+            openEditBookmarkModal(bm, context);
+        };
+        menu.appendChild(editItem);
+        
+        // 批量选择
+        const batchItem = document.createElement('div');
+        batchItem.className = 'context-menu-item';
+        batchItem.innerHTML = '<span class="context-menu-icon">☑</span>批量选择';
+        batchItem.onclick = () => {
+            hideBookmarkContextMenu();
+            toggleBatchSelectMode(true);
+            toggleBookmarkSelection(bm.id, card);
+        };
+        menu.appendChild(batchItem);
+        
+        // 分隔线
+        const divider = document.createElement('div');
+        divider.className = 'context-menu-divider';
+        menu.appendChild(divider);
+        
+        // 删除
+        const deleteItem = document.createElement('div');
+        deleteItem.className = 'context-menu-item danger';
+        deleteItem.innerHTML = '<span class="context-menu-icon">×</span>删除';
+        deleteItem.onclick = () => {
+            hideBookmarkContextMenu();
+            deleteBookmark(bm.id);
+        };
+        menu.appendChild(deleteItem);
+    }
+    
+    document.body.appendChild(menu);
+    
+    // 调整菜单位置
+    adjustMenuPosition(menu, x, y);
+    
+    // 使用命名函数以便后续移除
+    setTimeout(() => {
+        addBookmarkContextMenuListeners();
+    }, 0);
+}
+
+// 书签右键菜单事件监听器管理
+let bookmarkContextMenuClickHandler = null;
+let bookmarkContextMenuContextHandler = null;
+
+function addBookmarkContextMenuListeners() {
+    removeBookmarkContextMenuListeners();
+    bookmarkContextMenuClickHandler = (e) => {
+        const menu = document.getElementById('bookmarkContextMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideBookmarkContextMenu();
+        }
+    };
+    bookmarkContextMenuContextHandler = (e) => {
+        const menu = document.getElementById('bookmarkContextMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideBookmarkContextMenu();
+        }
+    };
+    document.addEventListener('click', bookmarkContextMenuClickHandler);
+    document.addEventListener('contextmenu', bookmarkContextMenuContextHandler);
+}
+
+function removeBookmarkContextMenuListeners() {
+    if (bookmarkContextMenuClickHandler) {
+        document.removeEventListener('click', bookmarkContextMenuClickHandler);
+        bookmarkContextMenuClickHandler = null;
+    }
+    if (bookmarkContextMenuContextHandler) {
+        document.removeEventListener('contextmenu', bookmarkContextMenuContextHandler);
+        bookmarkContextMenuContextHandler = null;
+    }
+}
+
+function hideBookmarkContextMenu() {
+    removeBookmarkContextMenuListeners();
+    const menu = document.getElementById('bookmarkContextMenu');
+    if (menu) {
+        menu.remove();
+    }
+}
+
+function hideBookmarkContextMenuOnOutside(e) {
+    const menu = document.getElementById('bookmarkContextMenu');
+    if (menu && !menu.contains(e.target)) {
+        hideBookmarkContextMenu();
+    }
+}
+
+// 空白区域右键菜单
+function showGridContextMenu(x, y, context = {}) {
+    hideGridContextMenu();
+    hideBookmarkContextMenu();
+    hideCategoryContextMenu();
+    hideBatchMoveMenu();
+    
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.id = 'gridContextMenu';
+    
+    const categoryId = context.categoryId || appData.activeCategory;
+    const folderId = context.folderId || null;
+    
+    // 添加书签
+    const addBookmarkItem = document.createElement('div');
+    addBookmarkItem.className = 'context-menu-item';
+    addBookmarkItem.innerHTML = '<span class="context-menu-icon">➕</span>添加书签';
+    addBookmarkItem.onclick = () => {
+        hideGridContextMenu();
+        openAddBookmarkModal({
+            type: 'link',
+            categoryId,
+            folderId
+        });
+    };
+    menu.appendChild(addBookmarkItem);
+    
+    // 新建文件夹（不在文件夹内时才显示）
+    if (!folderId) {
+        const addFolderItem = document.createElement('div');
+        addFolderItem.className = 'context-menu-item';
+        addFolderItem.innerHTML = '<span class="context-menu-icon">📁</span>新建文件夹';
+        addFolderItem.onclick = () => {
+            hideGridContextMenu();
+            openAddBookmarkModal({
+                type: 'folder',
+                categoryId,
+                folderId: null
+            });
+        };
+        menu.appendChild(addFolderItem);
+    }
+    
+    // 分隔线
+    const divider = document.createElement('div');
+    divider.className = 'context-menu-divider';
+    menu.appendChild(divider);
+    
+    // 打开设置
+    const settingsItem = document.createElement('div');
+    settingsItem.className = 'context-menu-item';
+    settingsItem.innerHTML = '<span class="context-menu-icon">⚙️</span>设置';
+    settingsItem.onclick = () => {
+        hideGridContextMenu();
+        openSettingsModal();
+    };
+    menu.appendChild(settingsItem);
+    
+    document.body.appendChild(menu);
+    
+    // 调整菜单位置
+    adjustMenuPosition(menu, x, y);
+    
+    setTimeout(() => {
+        addGridContextMenuListeners();
+    }, 0);
+}
+
+// 空白区域右键菜单事件监听器管理
+let gridContextMenuClickHandler = null;
+let gridContextMenuContextHandler = null;
+
+function addGridContextMenuListeners() {
+    removeGridContextMenuListeners();
+    gridContextMenuClickHandler = (e) => {
+        const menu = document.getElementById('gridContextMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideGridContextMenu();
+        }
+    };
+    gridContextMenuContextHandler = (e) => {
+        const menu = document.getElementById('gridContextMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideGridContextMenu();
+        }
+    };
+    document.addEventListener('click', gridContextMenuClickHandler);
+    document.addEventListener('contextmenu', gridContextMenuContextHandler);
+}
+
+function removeGridContextMenuListeners() {
+    if (gridContextMenuClickHandler) {
+        document.removeEventListener('click', gridContextMenuClickHandler);
+        gridContextMenuClickHandler = null;
+    }
+    if (gridContextMenuContextHandler) {
+        document.removeEventListener('contextmenu', gridContextMenuContextHandler);
+        gridContextMenuContextHandler = null;
+    }
+}
+
+function hideGridContextMenu() {
+    removeGridContextMenuListeners();
+    const menu = document.getElementById('gridContextMenu');
+    if (menu) {
+        menu.remove();
+    }
+}
+
+function hideGridContextMenuOnOutside(e) {
+    const menu = document.getElementById('gridContextMenu');
+    if (menu && !menu.contains(e.target)) {
+        hideGridContextMenu();
+    }
+}
+
+function showBatchMoveMenuAt(x, y) {
+    const selectedIds = Array.from(batchSelectState.selectedIds);
+    if (selectedIds.length === 0) return;
+    
+    // 先关闭所有其他菜单
+    hideBatchMoveMenu();
+    hideBookmarkContextMenu();
+    hideGridContextMenu();
+    hideCategoryContextMenu();
+    
+    const menu = document.createElement('div');
+    menu.className = 'context-menu batch-move-menu';
+    menu.id = 'batchMoveMenu';
+    
+    // 收集所有选中的书签ID，用于排除不能作为目标的文件夹
+    const selectedIdSet = new Set(selectedIds);
+    
+    appData.categories.forEach(cat => {
+        // 分类标题
+        const catItem = document.createElement('div');
+        catItem.className = 'context-menu-item category-item';
+        const isCurrent = cat.id === batchSelectState.categoryId && !batchSelectState.folderId;
+        if (isCurrent) {
+            catItem.classList.add('current');
+            catItem.innerHTML = `<span class="context-menu-icon">✓</span>${cat.name}`;
+        } else {
+            catItem.innerHTML = `<span class="context-menu-icon">📂</span>${cat.name}`;
+            catItem.onclick = () => {
+                hideBatchMoveMenu();
+                batchMoveToTarget(cat.id, null);
+            };
+        }
+        menu.appendChild(catItem);
+        
+        // 该分类下的文件夹
+        const folders = (cat.bookmarks || []).filter(b => b.type === 'folder');
+        folders.forEach(folder => {
+            // 排除被选中的文件夹和当前所在的文件夹
+            if (selectedIdSet.has(folder.id)) return;
+            const isFolderCurrent = cat.id === batchSelectState.categoryId && folder.id === batchSelectState.folderId;
+            
+            const folderItem = document.createElement('div');
+            folderItem.className = 'context-menu-item folder-item';
+            if (isFolderCurrent) {
+                folderItem.classList.add('current');
+                folderItem.innerHTML = `<span class="context-menu-icon">✓</span><span class="folder-indent"></span>📁 ${folder.title}`;
+            } else {
+                folderItem.innerHTML = `<span class="context-menu-icon"></span><span class="folder-indent"></span>📁 ${folder.title}`;
+                folderItem.onclick = () => {
+                    hideBatchMoveMenu();
+                    batchMoveToTarget(cat.id, folder.id);
+                };
+            }
+            menu.appendChild(folderItem);
+        });
+    });
+    
+    document.body.appendChild(menu);
+    
+    // 调整菜单位置
+    adjustMenuPosition(menu, x, y);
+    
+    setTimeout(() => {
+        addBatchMoveMenuListeners();
+    }, 0);
+}
+
+// 批量移动菜单事件监听器管理
+let batchMoveMenuClickHandler = null;
+let batchMoveMenuContextHandler = null;
+
+function addBatchMoveMenuListeners() {
+    removeBatchMoveMenuListeners();
+    batchMoveMenuClickHandler = (e) => {
+        const menu = document.getElementById('batchMoveMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideBatchMoveMenu();
+        }
+    };
+    batchMoveMenuContextHandler = (e) => {
+        const menu = document.getElementById('batchMoveMenu');
+        if (menu && !menu.contains(e.target)) {
+            hideBatchMoveMenu();
+        }
+    };
+    document.addEventListener('click', batchMoveMenuClickHandler);
+    document.addEventListener('contextmenu', batchMoveMenuContextHandler);
+}
+
+function removeBatchMoveMenuListeners() {
+    if (batchMoveMenuClickHandler) {
+        document.removeEventListener('click', batchMoveMenuClickHandler);
+        batchMoveMenuClickHandler = null;
+    }
+    if (batchMoveMenuContextHandler) {
+        document.removeEventListener('contextmenu', batchMoveMenuContextHandler);
+        batchMoveMenuContextHandler = null;
+    }
+}
+
+function batchCreateFolder() {
+    const selectedIds = Array.from(batchSelectState.selectedIds);
+    if (selectedIds.length < 2) {
+        alert('请至少选择 2 个书签来创建文件夹');
+        return;
+    }
+    
+    const folderName = prompt('请输入文件夹名称：', '新文件夹');
+    if (!folderName || !folderName.trim()) return;
+    
+    const categoryId = batchSelectState.categoryId;
+    const parentFolderId = batchSelectState.folderId;
+    
+    // 检查文件夹深度
+    const currentDepth = parentFolderId ? getFolderDepth(parentFolderId) : 0;
+    if (currentDepth >= 3) {
+        alert('文件夹最多只能嵌套 3 级');
+        return;
+    }
+    
+    // 获取第一个选中项的位置作为新文件夹的位置
+    const firstLoc = findBookmarkLocation(selectedIds[0]);
+    if (!firstLoc) return;
+    
+    // 收集所有选中的书签
+    const bookmarksToMove = [];
+    for (const id of selectedIds) {
+        const loc = findBookmarkLocation(id);
+        if (loc) {
+            bookmarksToMove.push({ ...loc.bookmark });
+        }
+    }
+    
+    // 从原位置移除书签
+    for (const id of selectedIds) {
+        removeBookmarkById(id);
+    }
+    
+    // 创建新文件夹
+    const newFolder = {
+        id: generateId('folder'),
+        type: 'folder',
+        title: folderName.trim(),
+        children: bookmarksToMove
+    };
+    
+    // 获取目标列表
+    const targetList = getBookmarkList(categoryId, parentFolderId);
+    if (targetList) {
+        targetList.splice(Math.min(firstLoc.index, targetList.length), 0, newFolder);
+    }
+    
+    // 批量操作是重要操作，立即保存
+    saveData({ immediate: true });
+    toggleBatchSelectMode(false);
+    renderApp({ skipAnimation: true });
+    refreshOpenFolderView({ skipAnimation: true });
+}
+
+// 批量删除选中的书签
+function batchDeleteSelected() {
+    const selectedIds = Array.from(batchSelectState.selectedIds);
+    if (selectedIds.length === 0) return;
+    
+    const count = selectedIds.length;
+    const confirmMsg = count === 1 
+        ? '确定删除所选书签吗？' 
+        : `确定删除所选的 ${count} 个书签吗？`;
+    
+    if (!confirm(confirmMsg)) return;
+    
+    const sourceFolderId = batchSelectState.folderId;
+    const sourceCategoryId = batchSelectState.categoryId;
+    
+    // 删除所有选中的书签
+    for (const id of selectedIds) {
+        removeBookmarkById(id);
+    }
+    
+    // 检查源文件夹是否需要清理（变空或只剩一个）
+    if (sourceFolderId) {
+        checkAndRemoveEmptyFolder(sourceFolderId, sourceCategoryId);
+    }
+    
+    // 批量操作是重要操作，立即保存
+    saveData({ immediate: true });
+    toggleBatchSelectMode(false);
+    renderApp({ skipAnimation: true });
+    refreshOpenFolderView({ skipAnimation: true });
+}
+
+function hideBatchMoveMenu() {
+    removeBatchMoveMenuListeners();
+    const menu = document.getElementById('batchMoveMenu');
+    if (menu) {
+        menu.remove();
+    }
+}
+
+function batchMoveToCategory(targetCategoryId) {
+    batchMoveToTarget(targetCategoryId, null);
+}
+
+function batchMoveToTarget(targetCategoryId, targetFolderId) {
+    const selectedIds = Array.from(batchSelectState.selectedIds);
+    if (selectedIds.length === 0) return;
+    
+    const sourceFolderId = batchSelectState.folderId;
+    const sourceCategoryId = batchSelectState.categoryId;
+    
+    // 移动所有选中的书签
+    for (const id of selectedIds) {
+        const loc = findBookmarkLocation(id);
+        if (loc) {
+            const bookmark = removeBookmarkAtLocation(loc);
+            if (bookmark) {
+                const targetList = getBookmarkList(targetCategoryId, targetFolderId);
+                if (targetList) {
+                    targetList.push(bookmark);
+                }
+            }
+        }
+    }
+    
+    // 检查源文件夹是否需要清理（变空或只剩一个）
+    if (sourceFolderId) {
+        checkAndRemoveEmptyFolder(sourceFolderId, sourceCategoryId);
+    }
+    
+    // 批量操作是重要操作，立即保存
+    saveData({ immediate: true });
+    toggleBatchSelectMode(false);
+    
+    // 如果移动到了其他分类，切换到该分类
+    if (targetCategoryId !== appData.activeCategory) {
+        appData.activeCategory = targetCategoryId;
+        saveData({ immediate: true });
+    }
+    
+    // 如果移动到了文件夹，打开该文件夹
+    if (targetFolderId) {
+        renderApp({ skipAnimation: true });
+        openFolderModal(targetFolderId);
+    } else {
+        // 如果当前在文件夹视图中，关闭它
+        if (openFolderId) {
+            closeFolderModal();
+        }
+        renderApp({ skipAnimation: true });
+    }
+}
+
+// ===== 书签搜索功能 =====
+const bookmarkSearchState = {
+    query: '',
+    results: [],
+    isSearching: false
+};
+
+function bindBookmarkSearchEvents() {
+    if (!els.bookmarkSearchInput) return;
+    
+    let searchDebounceTimer = null;
+    
+    els.bookmarkSearchInput.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+        
+        // 显示/隐藏清除按钮
+        if (els.clearBookmarkSearch) {
+            els.clearBookmarkSearch.classList.toggle('hidden', !query);
+        }
+        
+        // 防抖搜索
+        if (searchDebounceTimer) {
+            clearTimeout(searchDebounceTimer);
+        }
+        
+        searchDebounceTimer = setTimeout(() => {
+            performBookmarkSearch(query);
+        }, 150);
+    });
+    
+    // 清除搜索
+    if (els.clearBookmarkSearch) {
+        els.clearBookmarkSearch.addEventListener('click', () => {
+            els.bookmarkSearchInput.value = '';
+            els.clearBookmarkSearch.classList.add('hidden');
+            clearBookmarkSearch();
+        });
+    }
+    
+    // ESC 键清除搜索
+    els.bookmarkSearchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (els.bookmarkSearchInput.value) {
+                els.bookmarkSearchInput.value = '';
+                els.clearBookmarkSearch?.classList.add('hidden');
+                clearBookmarkSearch();
+                e.stopPropagation();
+            }
+        }
+    });
+}
+
+function performBookmarkSearch(query) {
+    bookmarkSearchState.query = query;
+    
+    if (!query) {
+        clearBookmarkSearch();
+        return;
+    }
+    
+    // 搜索所有分类中的书签（包括文件夹内的）
+    const results = [];
+    const queryLower = query.toLowerCase();
+    
+    appData.categories.forEach(category => {
+        searchInBookmarkList(category.bookmarks, category, null, queryLower, results);
+    });
+    
+    bookmarkSearchState.results = results;
+    bookmarkSearchState.isSearching = true;
+    
+    renderSearchResults(results, query);
+}
+
+function searchInBookmarkList(bookmarks, category, parentFolder, queryLower, results) {
+    if (!Array.isArray(bookmarks)) return;
+    
+    bookmarks.forEach(bm => {
+        const titleMatch = bm.title?.toLowerCase().includes(queryLower);
+        const urlMatch = bm.url?.toLowerCase().includes(queryLower);
+        
+        if (titleMatch || urlMatch) {
+            results.push({
+                bookmark: bm,
+                category: category,
+                parentFolder: parentFolder,
+                matchType: titleMatch ? 'title' : 'url'
+            });
+        }
+        
+        // 递归搜索文件夹内容
+        if (bm.type === 'folder' && Array.isArray(bm.children)) {
+            searchInBookmarkList(bm.children, category, bm, queryLower, results);
+        }
+    });
+}
+
+function renderSearchResults(results, query) {
+    if (!els.searchResultsPanel || !els.searchResultsGrid) return;
+    
+    const content = document.querySelector('.content');
+    content?.classList.add('searching');
+    
+    els.searchResultsPanel.classList.remove('hidden');
+    els.searchResultsGrid.innerHTML = '';
+    
+    // 更新结果计数
+    if (els.searchResultsCount) {
+        els.searchResultsCount.textContent = `找到 ${results.length} 个结果`;
+    }
+    
+    if (results.length === 0) {
+        els.searchResultsGrid.innerHTML = `
+            <div class="search-empty">
+                <div class="empty-icon">🔍</div>
+                <div class="empty-text">未找到匹配的书签</div>
+                <div class="empty-hint">尝试使用其他关键词搜索</div>
+            </div>
+        `;
+        return;
+    }
+    
+    // 渲染搜索结果
+    results.forEach((result, index) => {
+        const card = createSearchResultCard(result, query, index);
+        els.searchResultsGrid.appendChild(card);
+    });
+}
+
+function createSearchResultCard(result, query, index) {
+    const { bookmark: bm, category, parentFolder } = result;
+    const isFolder = bm.type === 'folder';
+    
+    const card = document.createElement(isFolder ? 'div' : 'a');
+    card.className = 'bookmark-card search-result-card';
+    if (!isFolder && bm.url) {
+        card.href = bm.url;
+        card.target = '_self';
+    }
+    card.style.animationDelay = `${Math.min(index * 0.03, 0.3)}s`;
+    
+    // 图标
+    const { primarySrc, fallbackList } = resolveBookmarkIconSource(bm);
+    const icon = document.createElement('img');
+    icon.className = 'bookmark-icon';
+    icon.src = primarySrc;
+    icon.alt = '';
+    icon.loading = 'lazy';
+    attachIconFallback(icon, { iconFallbacks: fallbackList });
+    
+    if (isFolder) {
+        const grid = createFolderIconGrid(bm);
+        card.appendChild(grid);
+    } else {
+        card.appendChild(icon);
+    }
+    
+    // 标题（带高亮）
+    const title = document.createElement('span');
+    title.className = 'bookmark-title';
+    title.innerHTML = highlightText(bm.title || '', query);
+    card.appendChild(title);
+    
+    // 分类标签
+    const categoryTag = document.createElement('span');
+    categoryTag.className = 'category-tag';
+    let tagText = category.name;
+    if (parentFolder) {
+        tagText += ` / ${parentFolder.title}`;
+    }
+    categoryTag.textContent = tagText;
+    categoryTag.title = tagText;
+    card.appendChild(categoryTag);
+    
+    // 点击事件
+    if (isFolder) {
+        card.addEventListener('click', (e) => {
+            e.preventDefault();
+            // 切换到对应分类并打开文件夹
+            if (category.id !== appData.activeCategory) {
+                appData.activeCategory = category.id;
+                renderCategories({ skipAnimation: true });
+            }
+            clearBookmarkSearch();
+            renderApp({ skipAnimation: true });
+            setTimeout(() => {
+                openFolderModal(bm.id, {});
+            }, 100);
+        });
+    } else {
+        // 普通书签点击时，如果有中键或修饰键则新标签打开
+        card.addEventListener('click', (e) => {
+            // 如果是左键无修饰键，直接跳转（默认行为）
+            // 不阻止默认行为
+        });
+        card.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+                // 中键点击，新标签打开
+                e.preventDefault();
+                window.open(bm.url, '_blank');
+            }
+        });
+    }
+    
+    // 右键菜单
+    card.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showSearchResultContextMenu(result, e.clientX, e.clientY, card);
+    });
+    
+    return card;
+}
+
+function highlightText(text, query) {
+    if (!query || !text) return escapeHtml(text);
+    
+    const regex = new RegExp(`(${escapeRegExp(query)})`, 'gi');
+    return escapeHtml(text).replace(regex, '<span class="search-highlight">$1</span>');
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function escapeRegExp(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function clearBookmarkSearch() {
+    bookmarkSearchState.query = '';
+    bookmarkSearchState.results = [];
+    bookmarkSearchState.isSearching = false;
+    
+    const content = document.querySelector('.content');
+    content?.classList.remove('searching');
+    
+    if (els.searchResultsPanel) {
+        els.searchResultsPanel.classList.add('hidden');
+    }
+    if (els.searchResultsGrid) {
+        els.searchResultsGrid.innerHTML = '';
+    }
+}
+
+function showSearchResultContextMenu(result, x, y, card) {
+    hideBookmarkContextMenu();
+    hideCategoryContextMenu();
+    hideGridContextMenu();
+    hideBatchMoveMenu();
+    
+    const { bookmark: bm, category, parentFolder } = result;
+    
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.id = 'bookmarkContextMenu';
+    
+    // 跳转到位置
+    const gotoItem = document.createElement('div');
+    gotoItem.className = 'context-menu-item';
+    gotoItem.innerHTML = '<span class="context-menu-icon">📍</span>跳转到位置';
+    gotoItem.onclick = () => {
+        hideBookmarkContextMenu();
+        // 切换到对应分类
+        if (category.id !== appData.activeCategory) {
+            appData.activeCategory = category.id;
+        }
+        clearBookmarkSearch();
+        renderApp({ skipAnimation: true });
+        
+        // 如果在文件夹内，打开文件夹
+        if (parentFolder) {
+            setTimeout(() => {
+                openFolderModal(parentFolder.id, {});
+            }, 100);
+        }
+    };
+    menu.appendChild(gotoItem);
+    
+    // 编辑
+    const editItem = document.createElement('div');
+    editItem.className = 'context-menu-item';
+    editItem.innerHTML = '<span class="context-menu-icon">✎</span>编辑';
+    editItem.onclick = () => {
+        hideBookmarkContextMenu();
+        clearBookmarkSearch();
+        openEditBookmarkModal(bm, {
+            categoryId: category.id,
+            folderId: parentFolder?.id || null
+        });
+    };
+    menu.appendChild(editItem);
+    
+    // 分隔线
+    const divider = document.createElement('div');
+    divider.className = 'context-menu-divider';
+    menu.appendChild(divider);
+    
+    // 删除
+    const deleteItem = document.createElement('div');
+    deleteItem.className = 'context-menu-item danger';
+    deleteItem.innerHTML = '<span class="context-menu-icon">×</span>删除';
+    deleteItem.onclick = () => {
+        hideBookmarkContextMenu();
+        const name = bm.title || '此项目';
+        if (confirm(`确定删除"${name}"？`)) {
+            removeBookmarkById(bm.id);
+            saveData({ immediate: true });
+            // 重新搜索
+            performBookmarkSearch(bookmarkSearchState.query);
+        }
+    };
+    menu.appendChild(deleteItem);
+    
+    document.body.appendChild(menu);
+    
+    // 调整菜单位置
+    adjustMenuPosition(menu, x, y);
+    
+    setTimeout(() => {
+        addBookmarkContextMenuListeners();
+    }, 0);
+}
+
 function deleteCategory(id) {
     if (!confirm('确定要删除这个分类及其所有书签吗？')) return;
     
@@ -2852,7 +4375,8 @@ function deleteCategory(id) {
     if (openFolderCategoryId === id) {
         closeFolderModal();
     }
-    saveData();
+    // 删除是重要操作，立即保存
+    saveData({ immediate: true });
     renderApp();
 }
 
@@ -2862,7 +4386,8 @@ function deleteBookmark(id) {
     const name = loc.bookmark.title || '此项目';
     if (!confirm(`确定删除“${name}”？`)) return;
     removeBookmarkById(id);
-    saveData();
+    // 删除是重要操作，立即保存
+    saveData({ immediate: true });
     renderApp({ skipAnimation: true });
     refreshOpenFolderView({ skipAnimation: true });
 }
@@ -2938,6 +4463,11 @@ function updateCategoryFieldVisibility(isInsideFolder) {
 }
 
 function openAddBookmarkModal(options = {}) {
+    // 打开模态框时退出批量选择模式
+    if (batchSelectState.enabled) {
+        toggleBatchSelectMode(false);
+    }
+    
     resetModalState();
     modalState.type = options.type === 'folder' ? 'folder' : 'link';
     modalState.targetCategoryId = options.categoryId || appData.activeCategory;
@@ -2965,6 +4495,11 @@ function openAddBookmarkModal(options = {}) {
 }
 
 function openEditBookmarkModal(bm, context = {}) {
+    // 打开模态框时退出批量选择模式
+    if (batchSelectState.enabled) {
+        toggleBatchSelectMode(false);
+    }
+    
     resetModalState();
     modalState.editingId = bm.id;
     modalState.type = bm.type === 'folder' ? 'folder' : 'link';
@@ -3279,7 +4814,8 @@ function persistFolderFromForm(title, categoryId, targetFolderId, options = {}) 
     }
     normalizeFolderChildTitles(folderBookmark.title, folderBookmark.children);
     insertBookmarkToList(targetList, insertIndex, folderBookmark);
-    saveData();
+    // 文件夹创建/编辑是重要操作，立即保存
+    saveData({ immediate: true });
     renderApp();
     refreshOpenFolderView();
     closeModals({ keepFolderOpen });
@@ -3563,24 +5099,8 @@ function normalizeUrlInput(input) {
     }
 }
 
-async function fetchIconCandidates(urlObj) {
-    const staticCandidates = buildStaticIconCandidates(urlObj);
-    let bestIconCandidates = [];
-    try {
-        bestIconCandidates = await fetchIconsFromBesticon(urlObj);
-    } catch (error) {
-        console.warn('BestIcon 服务不可用，使用静态候选列表', error);
-    }
-    const combined = [...staticCandidates, ...bestIconCandidates];
-    const seen = new Set();
-    const deduped = [];
-    combined.forEach(candidate => {
-        if (!candidate || !candidate.src) return;
-        if (seen.has(candidate.src)) return;
-        seen.add(candidate.src);
-        deduped.push(candidate);
-    });
-    return deduped;
+function fetchIconCandidates(urlObj) {
+    return buildStaticIconCandidates(urlObj);
 }
 
 function buildStaticIconCandidates(urlObj) {
@@ -3589,12 +5109,6 @@ function buildStaticIconCandidates(urlObj) {
     const encodedHostname = encodeURIComponent(hostname);
     const encodedOrigin = encodeURIComponent(origin);
     return [
-        {
-            src: `https://logo.clearbit.com/${hostname}?size=256`,
-            label: 'Clearbit 256px',
-            source: 'Clearbit',
-            priority: 5
-        },
         {
             src: `https://www.google.com/s2/favicons?domain=${encodedHostname}&sz=256`,
             label: 'Google S2 256px',
@@ -3626,13 +5140,6 @@ function buildStaticIconCandidates(urlObj) {
             priority: 2
         },
         {
-            src: `https://logo.clearbit.com/${hostname}?format=svg`,
-            label: 'Clearbit SVG',
-            source: 'Clearbit',
-            isSvg: true,
-            priority: 1
-        },
-        {
             src: `${origin}/favicon.svg`,
             label: '站点 favicon.svg',
             source: '站点',
@@ -3640,25 +5147,6 @@ function buildStaticIconCandidates(urlObj) {
             priority: 1
         }
     ];
-}
-
-async function fetchIconsFromBesticon(urlObj) {
-    const endpoint = `https://besticon-demo.herokuapp.com/allicons.json?url=${encodeURIComponent(urlObj.origin)}`;
-    const response = await fetch(endpoint, { cache: 'no-store' });
-    if (!response.ok) {
-        throw new Error('BestIcon 请求失败');
-    }
-    const data = await response.json();
-    if (!data || !Array.isArray(data.icons)) {
-        return [];
-    }
-    return data.icons.slice(0, 12).map(icon => ({
-        src: icon.url,
-        label: `${icon.width || icon.height || ''}px ${icon.format ? icon.format.toUpperCase() : ''}`.trim(),
-        source: 'BestIcon',
-        isSvg: icon.format?.toLowerCase() === 'svg',
-        priority: icon.width || icon.height || 0
-    }));
 }
 
 function prioritizeIconCandidates(list) {
@@ -3673,6 +5161,11 @@ function prioritizeIconCandidates(list) {
 }
 
 function openSettingsModal() {
+    // 打开设置时退出批量选择模式
+    if (batchSelectState.enabled) {
+        toggleBatchSelectMode(false);
+    }
+    
     if (els.bgSettingsPanel) {
         els.bgSettingsPanel.classList.add('hidden');
     }
@@ -3715,7 +5208,7 @@ async function switchStorageMode(targetMode) {
     await persistAppData(snapshot, { mode: targetMode, notifyOnError: true });
     await loadData({ mode: targetMode, notifyOnError: true });
     renderApp();
-    warmIconCacheForBookmarks();
+    // 图标缓存已在编辑时按需获取，无需批量预热
 }
 
 function exportDataAsFile() {
@@ -3737,8 +5230,20 @@ function handleImportDataFile(file, source = IMPORT_SOURCES.EDGE_TAB, mode = IMP
     const reader = new FileReader();
     reader.onload = (event) => {
         try {
-            const parsed = JSON.parse(event.target.result);
-            const normalized = parseImportedData(parsed, source);
+            const content = event.target.result;
+            let normalized;
+            
+            // 处理 Edge/Chrome 书签 HTML 文件
+            if (source === IMPORT_SOURCES.EDGE_BOOKMARK) {
+                normalized = parseEdgeBookmarkHtml(content);
+            } else if (source === IMPORT_SOURCES.SAFARI_BOOKMARK) {
+                // 处理 Safari 书签 HTML 文件
+                normalized = parseSafariBookmarkHtml(content);
+            } else {
+                const parsed = JSON.parse(content);
+                normalized = parseImportedData(parsed, source);
+            }
+            
             if (!normalized) {
                 alert('导入失败：文件格式不正确或不支持的数据来源');
                 return;
@@ -3751,9 +5256,10 @@ function handleImportDataFile(file, source = IMPORT_SOURCES.EDGE_TAB, mode = IMP
             maybeSyncBackgroundFromData(appData, { saveSettingsFlag: true });
             maybeSyncUiOpacityFromData(appData, { saveSettingsFlag: true });
             attachBackgroundToData(appData);
-            saveData();
+            // 导入是重要操作，立即保存
+            saveData({ immediate: true });
             renderApp();
-            warmIconCacheForBookmarks();
+            // 图标缓存已在编辑时按需获取，无需批量预热
             alert('导入成功');
             closeSettingsModal();
         } catch (err) {
@@ -3769,6 +5275,325 @@ function parseImportedData(raw, source) {
         return parseWeTabData(raw);
     }
     return parseMyLocalNewTabData(raw);
+}
+
+/**
+ * 解析 Edge/Chrome 导出的 Netscape Bookmark HTML 文件
+ * 结构说明：
+ * - PERSONAL_TOOLBAR_FOLDER="true" 的 H3 是"收藏夹栏"
+ * - 其他顶级文件夹/书签都属于隐含的"其他收藏夹"
+ */
+function parseEdgeBookmarkHtml(htmlContent) {
+    if (!htmlContent || typeof htmlContent !== 'string') return null;
+    
+    // 检查是否为 Netscape Bookmark 格式
+    if (!htmlContent.includes('NETSCAPE-Bookmark-file-1') && !htmlContent.includes('<DL>')) {
+        return null;
+    }
+    
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+    
+    // 找到根 DL 元素
+    const rootDL = doc.querySelector('DL');
+    if (!rootDL) return null;
+    
+    const categories = [];
+    let toolbarCategory = null;
+    let otherBookmarks = [];
+    
+    // 遍历根 DL 的直接子 DT 元素
+    const topLevelDTs = Array.from(rootDL.children).filter(el => el.tagName === 'DT');
+    
+    for (const dt of topLevelDTs) {
+        const h3 = dt.querySelector(':scope > H3');
+        const a = dt.querySelector(':scope > A');
+        
+        if (h3) {
+            // 这是一个文件夹
+            const isToolbar = h3.getAttribute('PERSONAL_TOOLBAR_FOLDER') === 'true';
+            const folderName = h3.textContent.trim() || '未命名文件夹';
+            const subDL = dt.querySelector(':scope > DL');
+            const bookmarks = subDL ? parseBookmarkDL(subDL) : [];
+            
+            if (isToolbar) {
+                // 收藏夹栏
+                toolbarCategory = {
+                    id: generateId('cat'),
+                    name: folderName,
+                    bookmarks
+                };
+            } else {
+                // 其他顶级文件夹 → 归入"其他收藏夹"
+                if (bookmarks.length > 0) {
+                    // 创建一个文件夹书签
+                    const folderBookmark = {
+                        id: generateId('folder'),
+                        title: folderName,
+                        type: 'folder',
+                        iconType: 'custom',
+                        icon: buildColorSwatchDataUrl('#6b7280', folderName.slice(0, 2)),
+                        iconFallbacks: [],
+                        children: bookmarks
+                    };
+                    otherBookmarks.push(folderBookmark);
+                }
+            }
+        } else if (a) {
+            // 顶级链接书签 → 归入"其他收藏夹"
+            const bookmark = parseBookmarkAnchor(a);
+            if (bookmark) {
+                otherBookmarks.push(bookmark);
+            }
+        }
+    }
+    
+    // 添加收藏夹栏分类
+    if (toolbarCategory) {
+        categories.push(toolbarCategory);
+    }
+    
+    // 添加"其他收藏夹"分类（如果有内容）
+    if (otherBookmarks.length > 0) {
+        categories.push({
+            id: generateId('cat'),
+            name: '其他收藏夹',
+            bookmarks: otherBookmarks
+        });
+    }
+    
+    if (!categories.length) return null;
+    
+    return {
+        activeCategory: categories[0].id,
+        categories
+    };
+}
+
+/**
+ * 递归解析 DL 元素中的书签和文件夹
+ */
+function parseBookmarkDL(dlElement) {
+    if (!dlElement) return [];
+    
+    const bookmarks = [];
+    const dts = Array.from(dlElement.children).filter(el => el.tagName === 'DT');
+    
+    for (const dt of dts) {
+        const h3 = dt.querySelector(':scope > H3');
+        const a = dt.querySelector(':scope > A');
+        
+        if (h3) {
+            // 子文件夹
+            const folderName = h3.textContent.trim() || '未命名文件夹';
+            const subDL = dt.querySelector(':scope > DL');
+            const children = subDL ? parseBookmarkDL(subDL) : [];
+            
+            if (children.length > 0) {
+                const folderBookmark = {
+                    id: generateId('folder'),
+                    title: folderName,
+                    type: 'folder',
+                    iconType: 'custom',
+                    icon: buildColorSwatchDataUrl('#6b7280', folderName.slice(0, 2)),
+                    iconFallbacks: [],
+                    children
+                };
+                bookmarks.push(folderBookmark);
+            }
+        } else if (a) {
+            const bookmark = parseBookmarkAnchor(a);
+            if (bookmark) {
+                bookmarks.push(bookmark);
+            }
+        }
+    }
+    
+    return bookmarks;
+}
+
+/**
+ * 解析单个书签 A 元素
+ */
+function parseBookmarkAnchor(anchorElement) {
+    if (!anchorElement) return null;
+    
+    const href = anchorElement.getAttribute('HREF');
+    const url = normalizeUrlInput(href);
+    if (!url) return null;
+    
+    const title = anchorElement.textContent.trim() || url;
+    const iconAttr = anchorElement.getAttribute('ICON');
+    
+    // 如果有内嵌的 base64 图标，使用它
+    let iconType = 'favicon';
+    let icon = '';
+    let iconFallbacks = [];
+    
+    if (iconAttr && iconAttr.startsWith('data:image')) {
+        iconType = 'custom';
+        icon = iconAttr;
+    } else {
+        const meta = generateHighResIconMeta(url);
+        icon = meta.icon;
+        iconFallbacks = meta.iconFallbacks;
+    }
+    
+    return {
+        id: generateId('bm'),
+        title,
+        url,
+        iconType,
+        icon,
+        iconFallbacks
+    };
+}
+
+/**
+ * 解析 Safari 导出的 Netscape Bookmark HTML 文件
+ * Safari 书签结构说明：
+ * - "个人收藏" - Safari 的收藏夹栏（类似 Edge 的收藏夹栏）
+ * - "书签菜单" - Safari 的书签菜单
+ * - "阅读列表" - Safari 特有的阅读列表（id="com.apple.ReadingList"）
+ * - 顶级书签 - 不在任何文件夹中的书签
+ */
+function parseSafariBookmarkHtml(htmlContent) {
+    if (!htmlContent || typeof htmlContent !== 'string') return null;
+    
+    // 检查是否为 Netscape Bookmark 格式
+    if (!htmlContent.includes('NETSCAPE-Bookmark-file-1') && !htmlContent.includes('<DL>')) {
+        return null;
+    }
+    
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlContent, 'text/html');
+    
+    // 找到根 DL 元素
+    const rootDL = doc.querySelector('DL');
+    if (!rootDL) return null;
+    
+    const categories = [];
+    let readingListBookmarks = [];
+    let topLevelBookmarks = [];
+    
+    // 遍历根 DL 的直接子 DT 元素
+    const topLevelDTs = Array.from(rootDL.children).filter(el => el.tagName === 'DT');
+    
+    for (const dt of topLevelDTs) {
+        const h3 = dt.querySelector(':scope > H3');
+        const a = dt.querySelector(':scope > A');
+        
+        if (h3) {
+            // 这是一个文件夹
+            const folderId = h3.getAttribute('id') || '';
+            const folderName = h3.textContent.trim() || '未命名文件夹';
+            const subDL = dt.querySelector(':scope > DL');
+            const bookmarks = subDL ? parseSafariBookmarkDL(subDL) : [];
+            
+            // 检查是否是阅读列表（Safari 特有）
+            if (folderId === 'com.apple.ReadingList') {
+                // 将阅读列表作为单独的分类
+                if (bookmarks.length > 0) {
+                    categories.push({
+                        id: generateId('cat'),
+                        name: '阅读列表',
+                        bookmarks
+                    });
+                }
+            } else if (folderName === '个人收藏' || folderName === '收藏夹') {
+                // Safari 的"个人收藏"文件夹 - 作为主分类
+                if (bookmarks.length > 0) {
+                    categories.unshift({
+                        id: generateId('cat'),
+                        name: folderName,
+                        bookmarks
+                    });
+                }
+            } else if (folderName === '书签菜单') {
+                // Safari 的"书签菜单" - 作为单独分类
+                if (bookmarks.length > 0) {
+                    categories.push({
+                        id: generateId('cat'),
+                        name: folderName,
+                        bookmarks
+                    });
+                }
+            } else {
+                // 其他顶级文件夹 - 作为单独的分类
+                if (bookmarks.length > 0) {
+                    categories.push({
+                        id: generateId('cat'),
+                        name: folderName,
+                        bookmarks
+                    });
+                }
+            }
+        } else if (a) {
+            // 顶级链接书签
+            const bookmark = parseBookmarkAnchor(a);
+            if (bookmark) {
+                topLevelBookmarks.push(bookmark);
+            }
+        }
+    }
+    
+    // 将顶级书签添加为"未分类书签"分类
+    if (topLevelBookmarks.length > 0) {
+        categories.push({
+            id: generateId('cat'),
+            name: '未分类书签',
+            bookmarks: topLevelBookmarks
+        });
+    }
+    
+    if (!categories.length) return null;
+    
+    return {
+        activeCategory: categories[0].id,
+        categories
+    };
+}
+
+/**
+ * 递归解析 Safari 书签 DL 元素中的书签和文件夹
+ */
+function parseSafariBookmarkDL(dlElement) {
+    if (!dlElement) return [];
+    
+    const bookmarks = [];
+    const dts = Array.from(dlElement.children).filter(el => el.tagName === 'DT');
+    
+    for (const dt of dts) {
+        const h3 = dt.querySelector(':scope > H3');
+        const a = dt.querySelector(':scope > A');
+        
+        if (h3) {
+            // 子文件夹
+            const folderName = h3.textContent.trim() || '未命名文件夹';
+            const subDL = dt.querySelector(':scope > DL');
+            const children = subDL ? parseSafariBookmarkDL(subDL) : [];
+            
+            if (children.length > 0) {
+                const folderBookmark = {
+                    id: generateId('folder'),
+                    title: folderName,
+                    type: 'folder',
+                    iconType: 'custom',
+                    icon: buildColorSwatchDataUrl('#6b7280', folderName.slice(0, 2)),
+                    iconFallbacks: [],
+                    children
+                };
+                bookmarks.push(folderBookmark);
+            }
+        } else if (a) {
+            const bookmark = parseBookmarkAnchor(a);
+            if (bookmark) {
+                bookmarks.push(bookmark);
+            }
+        }
+    }
+    
+    return bookmarks;
 }
 
 function parseMyLocalNewTabData(raw) {
@@ -5914,6 +7739,16 @@ function showRemoteActionsSection(show) {
 }
 
 function isPointerOutsideOpenModals(target) {
+    // 检查是否点击在右键菜单上
+    const contextMenus = document.querySelectorAll('.context-menu');
+    for (const menu of contextMenus) {
+        if (menu.contains(target)) return false;
+    }
+    
+    // 检查是否点击在批量操作状态栏上
+    const batchStatusBar = document.getElementById('batchStatusBar');
+    if (batchStatusBar && batchStatusBar.contains(target)) return false;
+    
     const modals = [els.bookmarkModal, els.categoryModal, els.settingsModal, els.folderModal].filter(m => m && !m.classList.contains('hidden'));
     if (!modals.length) return false;
     return modals.every(modal => {
@@ -5927,6 +7762,43 @@ function isPointerOutsideOpenModals(target) {
 function setupEventListeners() {
     bindSettingsInputListeners();
     bindBackgroundControls();
+    bindBookmarkSearchEvents();
+    
+    // 书签网格空白区域右键菜单
+    if (els.bookmarkGrid) {
+        els.bookmarkGrid.addEventListener('contextmenu', (e) => {
+            // 只在点击空白区域时触发（不是书签卡片或添加按钮）
+            const target = e.target;
+            const isCard = target.closest('.bookmark-card');
+            const isAddCard = target.closest('.add-bookmark-card');
+            if (!isCard && !isAddCard) {
+                e.preventDefault();
+                const currentCat = getActiveCategory();
+                showGridContextMenu(e.clientX, e.clientY, {
+                    categoryId: currentCat?.id || appData.activeCategory,
+                    folderId: null
+                });
+            }
+        });
+    }
+    
+    // 文件夹模态框内空白区域右键菜单
+    if (els.folderContent) {
+        els.folderContent.addEventListener('contextmenu', (e) => {
+            // 只在点击空白区域时触发（不是书签卡片或添加按钮）
+            const target = e.target;
+            const isCard = target.closest('.bookmark-card');
+            const isAddCard = target.closest('.add-bookmark-card');
+            if (!isCard && !isAddCard && openFolderId) {
+                e.preventDefault();
+                showGridContextMenu(e.clientX, e.clientY, {
+                    categoryId: openFolderCategoryId || appData.activeCategory,
+                    folderId: openFolderId
+                });
+            }
+        });
+    }
+    
     // 搜索
     if (els.searchEngineSelect) {
         els.searchEngineSelect.addEventListener('change', () => {
@@ -6003,18 +7875,32 @@ function setupEventListeners() {
         };
     }
     window.addEventListener('pointerdown', (e) => {
+        // 检查是否点击在右键菜单上
+        pointerDownOnContextMenu = !!e.target.closest('.context-menu');
         pointerDownOutsideModal = isPointerOutsideOpenModals(e.target);
     });
     window.addEventListener('pointerup', (e) => {
+        // 如果是在右键菜单上点击的，不触发关闭模态框
+        if (pointerDownOnContextMenu) {
+            pointerDownOutsideModal = false;
+            pointerDownOnContextMenu = false;
+            return;
+        }
         const pointerUpOutside = isPointerOutsideOpenModals(e.target);
         if (pointerDownOutsideModal && pointerUpOutside) {
             closeModals();
         }
         pointerDownOutsideModal = false;
+        pointerDownOnContextMenu = false;
     });
 
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+            // 如果在批量选择模式，先退出批量选择
+            if (batchSelectState.enabled) {
+                toggleBatchSelectMode(false);
+                return;
+            }
             const keepFolderOpen = !!(openFolderId && !(els.folderModal && els.folderModal.classList.contains('hidden')));
             closeModals({ keepFolderOpen });
         }
@@ -6052,7 +7938,8 @@ function setupEventListeners() {
                 name: name,
                 bookmarks: []
             });
-            saveData();
+            // 分类创建是重要操作，立即保存
+            saveData({ immediate: true });
             renderCategories(); // 重新渲染分类列表
             closeModals();
         }
@@ -6219,7 +8106,8 @@ function setupEventListeners() {
         }
 
         insertBookmarkToList(targetList, insertIndex, bookmarkData);
-        saveData();
+        // 书签创建/编辑是重要操作，立即保存
+        saveData({ immediate: true });
         renderApp();
         refreshOpenFolderView();
         closeModals({ keepFolderOpen });
@@ -6260,6 +8148,35 @@ function setupEventListeners() {
     if (els.remotePullBtn) {
         els.remotePullBtn.addEventListener('click', () => handleRemoteSyncAction('pull'));
     }
+    
+    // 页面卸载前确保数据已保存
+    window.addEventListener('beforeunload', () => {
+        // 同步刷新待保存的数据（使用 sendBeacon 或同步写入）
+        if (saveDataDebounceTimer) {
+            clearTimeout(saveDataDebounceTimer);
+            saveDataDebounceTimer = null;
+            // 使用同步方式尽可能保存数据
+            const dataToSave = attachBackgroundToData(appData);
+            try {
+                // 尝试同步保存到 localStorage 作为备份
+                const jsonStr = JSON.stringify({ [STORAGE_KEYS.DATA]: dataToSave });
+                localStorage.setItem('MyLocalNewTab_emergency_backup', jsonStr);
+            } catch (e) {
+                // 忽略错误
+            }
+        }
+    });
+    
+    // 页面可见性变化时的处理
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'hidden') {
+            // 页面变为隐藏时，立即刷新待保存的数据
+            await flushSaveData();
+        } else if (document.visibilityState === 'visible') {
+            // 页面变为可见时，检查是否有更新的数据
+            await checkAndSyncLatestData();
+        }
+    });
 }
 
 function enableFolderTitleEditing() {
@@ -6284,7 +8201,8 @@ function enableFolderTitleEditing() {
         const newTitle = input.value.trim();
         if (newTitle && newTitle !== currentTitle) {
             loc.bookmark.title = newTitle;
-            saveData();
+            // 文件夹重命名是用户主动操作，立即保存
+            saveData({ immediate: true });
             renderApp(); // Update main grid to show new title
             // Update modal title text
             els.folderModalTitle.textContent = newTitle;

@@ -15,6 +15,7 @@
 
 |  版本  |  日期   | 更新内容                                                                                                                                                         |
 | :----: | :-----: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|  v2.1  | 2025-12 | 添加书签搜索；支持导入 Edge/Chrome/Safari 导出的书签 HTML 文件；支持批量选择、转移；调整界面大小；改进图标缓存策略；修复些许 bug                                 |
 |  v2.0  | 2025-12 | 重构背景图加载逻辑（同步动画、智能缓存）；Gist 支持最大 50MB 背景图；本地与 WebDAV 模式无大小限制；优化文件夹标题显示效果；支持由 Wetab 直接导出的.data 格式文件 |
 | v1.5.3 | 2025-12 | 可修改标签的透明度                                                                                                                                               |
 | v1.5.2 | 2025-12 | 限制 gist 图片大小，提供压缩，确保 gist 同步时能正常显示背景图                                                                                                   |
@@ -53,7 +54,7 @@
     -   支持书签和文件夹两种类型
     -   拖拽排序，长按即可拖动
     -   支持文件夹嵌套，拖拽到文件夹即可收纳
-    -   书签卡片支持自定义图标（Favicon 自动获取/自定义上传/纯色+文字）
+    -   书签卡片支持自定义图标（自动获取/自定义上传/纯色+文字）
     -   多级图标降级策略，确保显示稳定
 
 -   **🗂️ 分类系统**
@@ -114,7 +115,7 @@
 -   **导入**：支持两种模式
     -   **合并模式**：在现有数据基础上追加（不重复网址）
     -   **覆盖模式**：完全替换当前数据
--   **兼容性**：支持本扩展和 WeTab 的数据格式导入
+-   **兼容性**：支持本扩展导出的 JSON 格式、WeTab 导出的 .data 格式、以及浏览器导出的书签 HTML 文件
 
 #### 💻 用户体验
 
@@ -223,6 +224,8 @@
 
 #### 搜索功能
 
+##### 网页搜索
+
 -   **切换搜索引擎**：点击搜索框左侧的下拉菜单
 -   **搜索**：在搜索框输入关键词，按 Enter 键
 -   **支持的搜索引擎**：
@@ -230,6 +233,14 @@
     -   Bing
     -   百度
     -   Yahoo
+
+##### 书签搜索
+
+-   **打开搜索**：点击侧边栏顶部的搜索框
+-   **输入关键词**：搜索框会实时过滤匹配的书签
+-   **搜索范围**：搜索所有分类中的书签标题和网址
+-   **清除搜索**：点击搜索框右侧的 × 按钮或清空输入
+-   **显示结果**：匹配的书签会显示在独立的搜索结果面板中，显示搜索结果数量
 
 #### 背景设置
 
@@ -310,12 +321,42 @@
 -   **导出数据**：点击"导出数据"按钮，下载 JSON 文件
 -   **导入数据**：
     1. 选择数据来源：
-        - 由当前扩展导出的数据
-        - 由 WeTab 导出的数据（需要将*.data 格式手动改为*.json）
+        - 由当前扩展导出的 JSON 数据
+        - 由 WeTab 导出的数据（.data 格式）
+        - 由 Edge/Chrome/Safari 导出的书签 HTML 文件
     2. 选择导入模式：
-        - **合并**：在现有数据基础上追加
+        - **合并**：在现有数据基础上追加（去重）
         - **覆盖**：替换当前所有数据
     3. 点击"导入数据"，选择文件
+
+##### 导入浏览器书签
+
+本扩展支持导入 Edge/Chrome/Safari 等浏览器导出的标准书签 HTML 文件。
+
+**如何导出浏览器书签：**
+
+1. **Edge/Chrome**：
+
+    - 打开 `edge://favorites/` 或 `chrome://bookmarks/`
+    - 点击右上角 `⋯` → 导出书签
+    - 保存为 HTML 文件
+
+2. **Safari**：
+    - 文件 → 导出书签
+    - 保存为 HTML 文件
+
+**导入步骤：**
+
+1. 打开设置 → 数据转移 → 导入数据
+2. 选择数据来源：`由 Edge/Chrome/Safari 导出的书签`
+3. 选择导入模式（合并/覆盖）
+4. 选择 HTML 书签文件
+
+**导入说明：**
+
+-   支持文件夹结构（转换为本扩展的文件夹）
+-   自动提取网站图标（Favicon）
+-   文件夹会按浏览器中的层级关系导入
 
 ---
 
@@ -686,10 +727,11 @@ Four storage options for different use cases:
     - Example: `https://dav.example.com/remote.php/dav/files/<user>/MyLocalNewTab-data.json`
 
 4. **GitHub Gist Sync**
+    - Ensure you can access the repository using git to avoid permission or network issues
     - Use GitHub Personal Access Token (requires `gist` permission)
     - Specify existing Gist ID, or leave empty to auto-create private Gist
     - Default filename `MyLocalNewTab-data.json`, customizable
-    - **Background image limit**: Max 50MB, smart compression option for files >10MB
+    - **Background image limit**: Max 50MB
     - Token and Gist ID stored locally only
 
 #### 📤 Data Import/Export
@@ -698,7 +740,7 @@ Four storage options for different use cases:
 -   **Import**: Two modes supported
     -   **Merge Mode**: Append to existing data (no duplicate URLs)
     -   **Overwrite Mode**: Replace all current data
--   **Compatibility**: Support for importing data from this extension and WeTab
+-   **Compatibility**: Support for importing JSON from this extension, .data format from WeTab, and standard bookmark HTML files from browsers
 
 #### 🎭 User Experience
 
@@ -807,6 +849,8 @@ Four storage options for different use cases:
 
 #### Search Function
 
+##### Web Search
+
 -   **Switch search engine**: Click dropdown menu on the left of search bar
 -   **Search**: Enter keywords in search bar, press Enter
 -   **Supported search engines**:
@@ -814,6 +858,14 @@ Four storage options for different use cases:
     -   Bing
     -   Baidu
     -   Yahoo
+
+##### Bookmark Search
+
+-   **Open search**: Click search box at the top of sidebar
+-   **Enter keywords**: Search box filters matching bookmarks in real-time
+-   **Search scope**: Searches bookmark titles and URLs across all categories
+-   **Clear search**: Click × button on the right of search box or clear input
+-   **Display results**: Matching bookmarks appear in separate search results panel with result count
 
 #### Background Settings
 
@@ -823,11 +875,17 @@ Four storage options for different use cases:
 2. Select "Local"
 3. Choose upload method:
     - **Local Upload**: Select image file
-        - Local/WebDAV mode: No size limit
-        - Gist mode: Max 50MB, optional compression for files >10MB
     - **Image Link**: Paste image URL (recommended for 4K users, no size limit)
 4. Adjust opacity (0-100%)
 5. Real-time preview
+
+> **⚠️ Gist Background Image Performance Notice**  
+> Gist stores images as Base64 text format with the following limitations:
+>
+> -   Base64 encoding increases size by approximately 33%
+> -   Large images significantly slow down sync and loading
+> -   Hard limit: 50MB (exceeding this will be rejected)
+> -   **WebDAV has no size limit**, supports binary storage, better performance, recommended for large images
 
 ##### Cloud Mode
 
@@ -875,7 +933,7 @@ Choose one of four storage methods:
         - **Merge and Upload**: Merge local and remote data
         - **Cloud to Local**: Download remote data to overwrite local
 
-4. **GitHub Gist Sync**
+4. **GitHub Gist Sync** (Recommended)
     - Configuration:
         - **GitHub Token**: [Create Token](https://github.com/settings/tokens) (only `gist` permission needed)
         - **Gist ID**: Leave empty to auto-create
@@ -888,12 +946,42 @@ Choose one of four storage methods:
 -   **Export Data**: Click "Export Data" button to download JSON file
 -   **Import Data**:
     1. Select data source:
-        - Data exported by current extension
-        - Data exported by WeTab (manually change \*.data format to \*.json)
+        - JSON data exported by current extension
+        - Data exported by WeTab (.data format)
+        - Bookmark HTML files exported by Edge/Chrome/Safari
     2. Select import mode:
-        - **Merge**: Append to existing data
+        - **Merge**: Append to existing data (deduplicate)
         - **Overwrite**: Replace all current data
     3. Click "Import Data", select file
+
+##### Import Browser Bookmarks
+
+This extension supports importing standard bookmark HTML files exported from Edge/Chrome/Safari browsers.
+
+**How to export browser bookmarks:**
+
+1. **Edge/Chrome**:
+
+    - Open `edge://favorites/` or `chrome://bookmarks/`
+    - Click `⋯` in top-right corner → Export bookmarks
+    - Save as HTML file
+
+2. **Safari**:
+    - File → Export Bookmarks
+    - Save as HTML file
+
+**Import steps:**
+
+1. Open Settings → Data Transfer → Import Data
+2. Select data source: `Bookmarks exported by Edge/Chrome/Safari`
+3. Select import mode (Merge/Overwrite)
+4. Choose HTML bookmark file
+
+**Import notes:**
+
+-   Supports folder structure (converted to extension folders)
+-   Auto-extracts website icons (Favicons)
+-   Folders imported according to browser hierarchy
 
 ---
 

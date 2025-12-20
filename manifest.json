@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "My Local New Tab",
-  "version": "2.0",
+  "version": "2.1",
   "description": "一个简洁、本地化的新标签页扩展",
   "chrome_url_overrides": {
     "newtab": "newtab.html"

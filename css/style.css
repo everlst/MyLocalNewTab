@@ -322,6 +322,7 @@ main {
     list-style: none;
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .sidebar li {
@@ -413,8 +414,8 @@ main {
 
 .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(100px, 140px));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(80px, 110px));
+    gap: 12px;
     justify-content: start;
 }
 
@@ -422,18 +423,18 @@ main {
 .bookmark-card, .add-bookmark-card {
     background: var(--card-bg);
     border-radius: var(--radius);
-    padding: 12px 14px;
+    padding: 8px 10px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     text-align: center;
     box-shadow: var(--shadow);
     cursor: pointer;
     transition: transform 0.25s cubic-bezier(0.2, 0, 0.2, 1), box-shadow 0.25s ease;
     will-change: transform, box-shadow;
-    height: 120px;
+    height: 95px;
     position: relative;
     text-decoration: none;
     color: inherit;
@@ -466,7 +467,7 @@ main {
 }
 
 .bookmark-placeholder {
-    height: 140px;
+    height: 110px;
     border: 2px dashed var(--primary-color);
     border-radius: var(--radius);
     background: var(--primary-soft);
@@ -503,11 +504,11 @@ main {
 }
 
 .bookmark-icon {
-    width: 44px;
-    height: 44px;
+    width: 32px;
+    height: 32px;
     margin-bottom: 0;
     object-fit: contain;
-    border-radius: 12px;
+    border-radius: 8px;
     transition: transform 0.3s;
 }
 
@@ -516,7 +517,7 @@ main {
 }
 
 .bookmark-title {
-    font-size: 14px;
+    font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
@@ -537,11 +538,11 @@ main {
     color: var(--text-secondary);
     transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
     height: auto;
-    min-height: 120px;
+    min-height: 95px;
 }
 
 .add-bookmark-card .plus {
-    font-size: 32px;
+    font-size: 24px;
     margin-bottom: 2px;
     transition: transform 0.3s;
 }
@@ -1519,4 +1520,397 @@ body.modal-open #bookmarkGrid .bookmark-card {
 .cloud-bg-status.has-cloud-bg .status-text {
     color: var(--primary-color);
     font-weight: 500;
+}
+
+/* ===== 右键菜单样式 ===== */
+.context-menu {
+    position: fixed;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    min-width: 140px;
+    z-index: 10000;
+    padding: 4px 0;
+    animation: scaleIn 0.15s ease-out;
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-color);
+    transition: background-color 0.15s ease;
+}
+
+.context-menu-item:hover {
+    background: var(--hover-bg);
+}
+
+.context-menu-item.danger {
+    color: #e53935;
+}
+
+.context-menu-item.danger:hover {
+    background: rgba(229, 57, 53, 0.1);
+}
+
+.context-menu-item.current {
+    color: var(--primary-color);
+    background: var(--primary-soft);
+    cursor: default;
+}
+
+.context-menu-icon {
+    font-size: 14px;
+    width: 18px;
+    text-align: center;
+}
+
+/* 分类重命名输入框 */
+.category-rename-input {
+    width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--primary-color);
+    border-radius: 4px;
+    font-size: inherit;
+    background: var(--input-bg);
+    color: var(--text-color);
+    outline: none;
+}
+
+.category-rename-input:focus {
+    box-shadow: 0 0 0 2px rgba(0,120,212,0.2);
+}
+
+/* ===== 书签右键菜单分隔线 ===== */
+.context-menu-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 4px 0;
+}
+
+/* ===== 批量选择模式 ===== */
+.batch-select-mode .bookmark-card,
+body.batch-select-active .folder-modal .bookmark-card {
+    cursor: pointer;
+}
+
+.batch-select-mode .bookmark-card::before,
+body.batch-select-active .folder-modal .bookmark-card::before {
+    content: '';
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--card-bg);
+    z-index: 5;
+    transition: all 0.2s ease;
+}
+
+.batch-select-mode .bookmark-card:hover::before,
+body.batch-select-active .folder-modal .bookmark-card:hover::before {
+    border-color: var(--primary-color);
+}
+
+.batch-select-mode .bookmark-card.batch-selected::before,
+body.batch-select-active .folder-modal .bookmark-card.batch-selected::before {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.batch-select-mode .bookmark-card.batch-selected::after,
+body.batch-select-active .folder-modal .bookmark-card.batch-selected::after {
+    content: '✓';
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 12px;
+    font-weight: bold;
+    z-index: 6;
+}
+
+.batch-select-mode .bookmark-card .card-actions,
+body.batch-select-active .folder-modal .bookmark-card .card-actions {
+    display: none !important;
+}
+
+.batch-select-mode .add-bookmark-card,
+body.batch-select-active .folder-modal .add-bookmark-card {
+    display: none;
+}
+
+/* 批量操作浮动提示 */
+.batch-status-bar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--card-bg);
+    border: 1px solid var(--primary-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    z-index: 1100;
+    animation: fadeInUp 0.3s ease-out;
+    font-size: 13px;
+}
+
+.batch-status-bar.hidden {
+    display: none;
+}
+
+.batch-status-bar .batch-count {
+    color: var(--primary-color);
+    font-weight: 500;
+}
+
+.batch-status-bar .batch-tip {
+    color: var(--text-secondary);
+}
+
+.batch-status-bar .batch-action-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--primary-color);
+    border-radius: 4px;
+    background: var(--primary-soft);
+    color: var(--primary-color);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.batch-status-bar .batch-action-btn:hover {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.batch-status-bar .batch-cancel-btn {
+    padding: 4px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--card-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.batch-status-bar .batch-cancel-btn:hover {
+    background: var(--hover-bg);
+}
+
+/* 批量移动菜单 */
+.batch-move-menu {
+    max-height: 350px;
+    overflow-y: auto;
+    min-width: 180px;
+}
+
+.batch-move-menu .category-item {
+    font-weight: 500;
+}
+
+.batch-move-menu .folder-item {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.batch-move-menu .folder-item:hover {
+    color: var(--text-color);
+}
+
+.batch-move-menu .folder-indent {
+    display: inline-block;
+    width: 12px;
+}
+
+.batch-move-menu .context-menu-item.current {
+    color: var(--primary-color);
+    font-weight: 500;
+    cursor: default;
+    opacity: 0.7;
+}
+
+.batch-move-menu .context-menu-item.current:hover {
+    background: transparent;
+}
+
+/* ===== 书签搜索功能 ===== */
+.sidebar-search {
+    position: relative;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.sidebar-search input {
+    width: 100%;
+    padding: 8px 32px 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--input-bg);
+    color: var(--text-color);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sidebar-search input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(0,120,212,0.15);
+}
+
+.sidebar-search input::placeholder {
+    color: var(--text-secondary);
+}
+
+.sidebar-search .search-icon {
+    position: absolute;
+    right: 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.sidebar-search input:focus + .search-icon,
+.sidebar-search input:not(:placeholder-shown) + .search-icon {
+    opacity: 0;
+}
+
+.sidebar-search .clear-search-btn {
+    position: absolute;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: var(--hover-bg);
+    color: var(--text-secondary);
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sidebar-search .clear-search-btn:hover {
+    background: var(--secondary-btn-hover);
+    color: var(--text-color);
+}
+
+.sidebar-search .clear-search-btn.hidden {
+    display: none;
+}
+
+/* 搜索结果面板 */
+.search-results-panel {
+    margin-bottom: 20px;
+}
+
+.search-results-panel.hidden {
+    display: none;
+}
+
+.search-results-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.search-results-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.search-results-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--muted-bg);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+/* 搜索结果项 - 带分类标签 */
+.search-result-card {
+    position: relative;
+}
+
+.search-result-card .category-tag {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    background: var(--muted-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    max-width: 60px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.search-result-card:hover .category-tag {
+    opacity: 1;
+}
+
+/* 搜索高亮 */
+.search-highlight {
+    background: rgba(255, 213, 0, 0.3);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* 搜索时隐藏普通网格 */
+.content.searching #bookmarkGrid {
+    display: none;
+}
+
+/* 空搜索结果 */
+.search-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-secondary);
+}
+
+.search-empty .empty-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+.search-empty .empty-text {
+    font-size: 14px;
+}
+
+.search-empty .empty-hint {
+    font-size: 12px;
+    margin-top: 8px;
+    color: var(--text-secondary);
+    opacity: 0.7;
 }

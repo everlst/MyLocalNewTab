@@ -26,6 +26,11 @@
         
         <main>
             <aside class="sidebar">
+                <div class="sidebar-search">
+                    <input type="text" id="bookmarkSearchInput" placeholder="搜索书签..." />
+                    <span class="search-icon">🔍</span>
+                    <button type="button" id="clearBookmarkSearch" class="clear-search-btn hidden">×</button>
+                </div>
                 <ul id="categoryList">
                     <!-- 分类列表将通过 JS 生成 -->
                     <li class="active" data-cat="default">常用</li>
@@ -34,6 +39,13 @@
             </aside>
             
             <section class="content">
+                <div id="searchResultsPanel" class="search-results-panel hidden">
+                    <div class="search-results-header">
+                        <span class="search-results-title">搜索结果</span>
+                        <span id="searchResultsCount" class="search-results-count"></span>
+                    </div>
+                    <div id="searchResultsGrid" class="grid"></div>
+                </div>
                 <div id="bookmarkGrid" class="grid">
                     <!-- 书签列表将通过 JS 生成 -->
                 </div>
@@ -336,6 +348,8 @@
                         <select id="importSource">
                             <option value="MyLocalNewTab">由当前扩展导出的数据</option>
                             <option value="wetab">由 WeTab 导出的数据</option>
+                            <option value="edge_bookmark">由 Edge/Chrome 导出的书签（HTML）</option>
+                            <option value="safari_bookmark">由 Safari 导出的书签（HTML）</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -348,9 +362,9 @@
                     <div class="settings-actions">
                         <button id="exportDataBtn" class="btn-secondary" type="button">导出数据</button>
                         <label for="importDataInput" class="btn-secondary import-label">导入数据</label>
-                        <input type="file" id="importDataInput" accept=".json,.data,application/json" class="hidden" />
+                        <input type="file" id="importDataInput" accept=".json,.data,.html,application/json,text/html" class="hidden" />
                     </div>
-                    <p class="tips">导出为 JSON 文件，可用于备份或导入至其他设备。导入前请选择对应的数据来源。WeTab 导出的 .data 文件可直接导入。</p>
+                    <p class="tips">导出为 JSON 文件，可用于备份或导入至其他设备。导入前请选择对应的数据来源。WeTab 导出的 .data 文件可直接导入。Edge/Chrome/Safari 书签可在浏览器中导出为 HTML 文件后导入。</p>
                 </div>
             </div>
             <div class="modal-footer">
